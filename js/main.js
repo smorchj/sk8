@@ -21,6 +21,7 @@ import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
 import { SkateAnim } from './anim.js';
 import { RiderCreator } from './creator.js';
+import { buildSoleData } from './sole.js';
 
 const BOARD_GLB = 'assets/skateboard.glb';
 const NOSE_FLIP = true;   // skateboard.glb visual nose is on -Z; game nose = +Z
@@ -124,6 +125,7 @@ let charScene = null;        // current rider Object3D (always an SDK spawn)
 let rig = null;
 let skel = null;
 let clips = null;
+let soleData = null;
 
 // The SDK character is the SDK's: no mesh deletion, no material/shadow
 // stomping, no manual bone resets (owner, 2026-09-01 — the documented pipe
@@ -191,6 +193,7 @@ async function setCharacter(obj, ctrl) {
     for (const c of Object.values(clips)) c.rebake(skel);
   }
   if (anim) { anim.rig = rig; anim.skel = skel; }
+  soleData = buildSoleData(charScene, rig);
   attachMarkers();
 }
 
@@ -227,6 +230,7 @@ const creator = new RiderCreator({
     skel = buildSkeletonInfo(charScene);
     for (const c of Object.values(clips)) c.rebake(skel);
     if (anim) { anim.rig = rig; anim.skel = skel; }
+    soleData = buildSoleData(charScene, rig);
     attachMarkers();
   },
 });
@@ -376,6 +380,7 @@ function tick(dt) {
     boardNode.quaternion.fromArray(buf.board.quat);
   }
   rig.apply(buf);
+  anim.soleAttach(rig, boardNode, soleData, playerRoot);   // mesh-level sole-to-deck contact
   anim.plantPostRig(rig, boardNode, playerRoot);   // landing feet-on-board invariant
 
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
@@ -403,6 +408,7 @@ window.SK8 = {
   get anim() { return anim; },
   get rig() { return rig; },
   get clips() { return clips; },
+  get soleData() { return soleData; },
   get input() { return input; },
   markers: setMarkers,
   inspect(on = true, dist = 3.0, height = 1.1) {

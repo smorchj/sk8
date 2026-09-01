@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { makeBuffer, blendBuffers, addRot } from './rig.js';
 import { fkPosition, fkChain } from './clips.js';
+import { measureSoleDrop } from './sole.js';
 import { G } from './physics.js';
 
 const LEG = {
@@ -52,6 +53,8 @@ export class SkateAnim {
     this._booted = false;                 // first frame: no fade from the empty buffer
     this.pushHeld = false;                // stroke keeps looping while true (keyboard hold)
     this._swipeHold = 0;                  // seconds of push left from the last swipe
+    this._soleDy = 0;                     // smoothed mesh-level sole-to-deck correction
+    this._dt = 1 / 60;
 
     // base riding pose: a straight-rolling moment of a clip whose nose axis is
     // trustworthy (verified 2026-09-01 with foot markers; cruise is
@@ -169,6 +172,7 @@ export class SkateAnim {
 
   update(dt, steer) {
     this._t += dt;
+    this._dt = dt;
     const phys = this.phys;
 
     for (const e of phys.drainEvents()) {
@@ -396,7 +400,9 @@ export class SkateAnim {
       const foot = rig.bones.get('Foot' + side);
       if (!up || !low || !foot) continue;
 
-      const T = boardNode.localToWorld(pd.land[side].clone().lerp(pd.ride[side], pd.mix));
+      const tLocal = pd.land[side].clone().lerp(pd.ride[side], pd.mix);
+      tLocal.y += this._soleDy;            // ankle targets ride the sole calibration
+      const T = boardNode.localToWorld(tLocal);
       const preUp = _qa.copy(up.quaternion), preLow = _qb.copy(low.quaternion), preFoot = _qc.copy(foot.quaternion);
       const H = up.getWorldPosition(_va);
       const K = low.getWorldPosition(_vb);
@@ -492,6 +498,41 @@ export class SkateAnim {
     }
     addRot(pose, 'Spine_01', 'z', -roll * 0.6);
     addRot(pose, 'Head', 'z', -roll * 0.4);
+  }
+
+  // MESH-LEVEL sole contact (owner, 2026-09-02): after the rig is applied,
+  // attach the lowest outfit/shoe point of the contacting feet to the deck top
+  // by shifting the whole body vertically. Which feet count is state truth:
+  // riding/wind-up/landing = both, push = the standing foot, airborne = none
+  // (flips must separate). Runs after the IK plant; the plant's targets carry
+  // the same offset so the two never fight.
+  soleAttach(rig, boardNode, soleData, playerRoot) {
+    // bone matrixWorlds are stale from the LAST render (they'd include last
+    // frame's shift and the correction would converge to half) — refresh the
+    // freshly-applied raw pose before measuring
+    playerRoot.updateMatrixWorld(true);
+    let feet = null;
+    if (this.state === 'ride' || this.state === 'windup' || this.state === 'landing') {
+      feet = ['L', 'R'];
+    } else if (this.state === 'push') {
+      const info = this.clips.push.pushInfo;
+      const mirror = this.clips.push.stance !== this.stance;
+      let sf = info?.standFoot === 'FootL' ? 'L' : 'R';
+      if (mirror) sf = sf === 'L' ? 'R' : 'L';
+      feet = [sf];
+    } else if (this.state === 'trick' && this.trick && !this.trick.popped) {
+      feet = ['L', 'R'];
+    }
+    // rig.apply resets the hips from the buffer every frame, so this reads the
+    // RAW pose — chase the absolute correction, smoothed (fast engage, gentler
+    // release into the air).
+    const target = feet ? measureSoleDrop(soleData, boardNode, feet) : 0;
+    const k = 1 - Math.exp(-(feet ? 25 : 8) * this._dt);
+    this._soleDy += (target - this._soleDy) * k;
+    if (Math.abs(this._soleDy) > 1e-4 && rig.hips) {
+      rig.hips.position.y += this._soleDy;
+      rig.hips.updateWorldMatrix(true, true);
+    }
   }
 
   // express a buffer relative to a measured 2D ground frame {x, z, yaw}
