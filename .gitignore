@@ -1,0 +1,8 @@
+# creategamecharacters.ai project bundle — NOT open source. Characters, outfits,
+# hair and basemeshes carry the site's licensing and are fetched per-user with
+# their own read key (see README "Characters"). Also ~640MB.
+assets/creator/
+assets/creator-min/
+
+node_modules/
+*.log

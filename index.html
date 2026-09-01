@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>sk8 — farm demo</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101216; color: #eee;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
+  #viewport { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* debug HUD (LAW ZERO: we look at real numbers) */
+  #hud { position: fixed; left: 12px; top: 12px; z-index: 10; font-size: 12px;
+    line-height: 1.5; color: #cfd6e2; background: #0009; padding: 8px 12px;
+    border-radius: 8px; pointer-events: none; white-space: pre; }
+  #trickname { position: fixed; top: 10%; left: 0; right: 0; text-align: center;
+    z-index: 10; font-size: 34px; font-weight: 800; letter-spacing: .04em;
+    color: #fff; text-shadow: 0 2px 12px #000c; opacity: 0; transition: opacity .15s;
+    pointer-events: none; }
+  #trickname.show { opacity: 1; }
+
+  /* gesture trace overlay */
+  #gesture { position: fixed; inset: 0; z-index: 9; pointer-events: none; }
+
+  /* the trick pad hint (lower screen) */
+  #padhint { position: fixed; left: 0; right: 0; bottom: 0; height: 42%;
+    z-index: 5; pointer-events: none; border-top: 1px dashed #ffffff14;
+    background: linear-gradient(#0000, #0e131c66); opacity: .5; }
+  #padhint span { position: absolute; bottom: 10px; width: 100%; text-align: center;
+    font-size: 11px; color: #8b93a3; letter-spacing: .06em; }
+
+  #keys { position: fixed; right: 12px; top: 12px; z-index: 10; font-size: 11px;
+    color: #8b93a3; background: #0009; padding: 8px 12px; border-radius: 8px;
+    line-height: 1.6; pointer-events: none; white-space: pre; text-align: right; }
+
+  #attrib { position: fixed; right: 12px; bottom: 10px; z-index: 10; font-size: 11px;
+    color: #7c8494; pointer-events: none; }
+
+  #loading { position: fixed; inset: 0; display: flex; align-items: center;
+    justify-content: center; z-index: 30; background: #101216; color: #9aa1ad;
+    font-size: 15px; flex-direction: column; gap: 10px; }
+
+  /* stance / creator bar */
+  #creatorbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px;
+    z-index: 20; display: flex; gap: 8px; align-items: center; }
+  #creatorbar button { background: #23262dcc; color: #eee; border: 1px solid #3a3f4a;
+    border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  #creatorbar button.active { background: #3d6dff; border-color: #3d6dff; }
+
+  /* the in-game character creator panel (game-owned UI over the SDK) */
+  #creatorPanel { position: fixed; right: 0; top: 0; bottom: 0; width: min(340px, 86vw);
+    z-index: 25; background: #14171cee; border-left: 1px solid #2a2e36;
+    padding: 16px; overflow-y: auto; display: none; font-size: 13px; }
+  #creatorPanel.open { display: block; }
+  #creatorPanel h3 { margin: 14px 0 6px; font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; color: #8b93a3; }
+  #creatorPanel h3:first-child { margin-top: 0; }
+  #creatorPanel .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #creatorPanel button { background: #23262d; color: #ddd; border: 1px solid #3a3f4a;
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  #creatorPanel button.active { background: #3d6dff; border-color: #3d6dff; color: #fff; }
+  #creatorPanel button.big { width: 100%; padding: 10px; font-size: 13px; }
+  #creatorPanel input[type=range] { width: 100%; }
+  #creatorPanel .note { color: #67707f; font-size: 11px; margin-top: 4px; }
+  #creatorPanel #creatorClose { position: absolute; top: 10px; right: 12px;
+    background: none; border: none; font-size: 18px; color: #8b93a3; }
+  #creatorPanel .credit { margin-top: 18px; font-size: 11px; color: #67707f; }
+</style>
+</head>
+<body>
+  <div id="viewport"></div>
+  <canvas id="gesture"></canvas>
+  <div id="padhint"><span>TRICK PAD — hold to wind up, flick up to ollie</span></div>
+  <div id="hud">booting…</div>
+  <div id="keys"></div>
+  <div id="trickname"></div>
+  <div id="creatorbar">
+    <button id="stanceRegular">Regular</button>
+    <button id="stanceGoofy">Goofy</button>
+    <button id="openCreator">Rider ▸</button>
+  </div>
+  <div id="creatorPanel"></div>
+  <div id="attrib">Powered by creategamecharacters.com</div>
+  <div id="loading"><div>Loading rider…</div><div id="loadmsg" style="font-size:12px;color:#67707f"></div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
