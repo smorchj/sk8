@@ -35,7 +35,7 @@ export class RiderCreator {
 
   async _ensureSDK() {
     if (this.creator) return this.creator;
-    const { Creator } = await import('../assets/creator/sdk/v1.js');
+    const { Creator } = await import('../assets/creator-min/sdk/v1.js');
     this.creator = await Creator.open({
       key: PROJECT_KEY,
       assets: ASSETS,
