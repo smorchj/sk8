@@ -1,0 +1,184 @@
+{
+  "v": 1,
+  "base": {
+    "url": "bases/venus.glb"
+  },
+  "spectrum": {
+    "url": "spectrum.bin"
+  },
+  "face": {
+    "url": "bases/venus.face.json"
+  },
+  "hair": {
+    "Afro": {
+      "a": "hair/Afro/Afro.venus.glb",
+      "b": "hair/Afro/Afro.mars.glb"
+    },
+    "Crop": {
+      "a": "hair/Crop/Crop.venus.glb",
+      "b": "hair/Crop/Crop.mars.glb",
+      "scalp": {
+        "mask": "scalp_mask.png"
+      }
+    },
+    "LongerBob": {
+      "a": "hair/LongerBob/LongerBob.venus.glb",
+      "b": "hair/LongerBob/LongerBob.mars.glb"
+    },
+    "MidLengthShag": {
+      "a": "hair/MidLengthShag/MidLengthShag.venus.glb",
+      "b": "hair/MidLengthShag/MidLengthShag.mars.glb",
+      "scalp": {
+        "mask": "scalp_mask.png"
+      }
+    },
+    "TopKnot": {
+      "a": "hair/TopKnot/TopKnot.venus.glb",
+      "b": "hair/TopKnot/TopKnot.mars.glb",
+      "scalp": {
+        "mask": "scalp_mask.png"
+      }
+    },
+    "Quiff": {
+      "a": "hair/Quiff/Quiff.venus.glb",
+      "b": "hair/Quiff/Quiff.mars.glb",
+      "scalp": {
+        "mask": "scalp_mask.png"
+      }
+    },
+    "MessySlickBack": {
+      "a": "hair/MessySlickBack/MessySlickBack.venus.glb",
+      "b": "hair/MessySlickBack/MessySlickBack.mars.glb"
+    },
+    "LongSlickBack": {
+      "a": "hair/LongSlickBack/LongSlickBack.venus.glb",
+      "b": "hair/LongSlickBack/LongSlickBack.mars.glb"
+    },
+    "LongHair": {
+      "a": "hair/LongHair/LongHair.venus.glb",
+      "b": "hair/LongHair/LongHair.mars.glb",
+      "scalp": {
+        "mask": "scalp_mask.png"
+      }
+    },
+    "LowBun": {
+      "a": "hair/LowBun/LowBun.venus.glb",
+      "b": "hair/LowBun/LowBun.mars.glb"
+    }
+  },
+  "outfits": {
+    "crop-top jeans and sneakers": {
+      "ends": {
+        "mars": "outfits/mars__Crop-top_jeans_and_sneakers.glb",
+        "venus": "outfits/venus__crop-top_jeans_and_sneakers.glb"
+      },
+      "bases": [
+        "mars",
+        "venus"
+      ],
+      "a": "outfits/venus__crop-top_jeans_and_sneakers.glb",
+      "b": "outfits/mars__Crop-top_jeans_and_sneakers.glb",
+      "occ": {
+        "on": true,
+        "reach": 0.1,
+        "band": 0.08,
+        "margin": 0.02,
+        "applied": true,
+        "manual": []
+      },
+      "tuck": {
+        "amount": 0.012,
+        "smooth": 2,
+        "height": 0,
+        "applied": false
+      }
+    },
+    "Casual white t-shirt and jeans": {
+      "ends": {
+        "mars": "outfits/mars__Casual_White_T-shirt.glb",
+        "venus": "outfits/venus__Casual_white_t-shirt_and_jeans.glb"
+      },
+      "bases": [
+        "mars",
+        "venus"
+      ],
+      "a": "outfits/venus__Casual_white_t-shirt_and_jeans.glb",
+      "b": "outfits/mars__Casual_White_T-shirt.glb",
+      "occ": {
+        "on": true,
+        "reach": 0.1,
+        "band": 0.08,
+        "margin": 0.02,
+        "applied": true,
+        "manual": []
+      },
+      "tuck": {
+        "amount": 0.012,
+        "smooth": 2,
+        "height": 0,
+        "applied": false
+      }
+    },
+    "Prison Jumpsuit": {
+      "ends": {
+        "mars": "outfits/mars__Prisoner.glb",
+        "venus": "outfits/venus__Prison_Jumpsuit.glb"
+      },
+      "bases": [
+        "mars",
+        "venus"
+      ],
+      "a": "outfits/venus__Prison_Jumpsuit.glb",
+      "b": "outfits/mars__Prisoner.glb",
+      "occ": {
+        "on": true,
+        "reach": 0.1,
+        "band": 0.08,
+        "margin": 0.02,
+        "applied": true,
+        "manual": []
+      },
+      "tuck": {
+        "amount": 0.012,
+        "smooth": 2,
+        "height": 0,
+        "applied": false
+      }
+    }
+  },
+  "eyes": {
+    "index": "eyes/eyes.json"
+  },
+  "presets": {
+    "Steve": {
+      "recipe": "characters/Steve/0f2f627a-9bda-46f4-b355-ff88bd215406.recipe.json"
+    },
+    "Cander": {
+      "recipe": "characters/Cander/f1edfdaf-fc95-4ea2-979d-927feee158a1.recipe.json"
+    },
+    "Ember": {
+      "recipe": "characters/Ember/b809bb3c-d152-4bd4-ad56-cd6031493194.recipe.json"
+    },
+    "Liu": {
+      "recipe": "characters/Liu/4c733132-d4b3-4ad9-82dd-b5f4f0f4c89d.recipe.json"
+    },
+    "Charles": {
+      "recipe": "characters/Charles/a6c8fa68-527b-4703-a9dd-c2f75c82c8bd.recipe.json"
+    },
+    "Peble": {
+      "recipe": "characters/Peble/e900d370-3edf-46de-9b6d-78c18290f43b.recipe.json"
+    },
+    "Willow": {
+      "recipe": "characters/Willow/75dbd732-b0ad-4e66-9a20-238b6ab4188b.recipe.json"
+    },
+    "Heiring": {
+      "recipe": "characters/Heiring/05584652-92ed-4732-8fff-b00c4b46411b.recipe.json"
+    },
+    "Kari": {
+      "recipe": "characters/Kari/a5e93d09-cb51-4060-9c28-4a2731ff758e.recipe.json"
+    },
+    "Maple": {
+      "recipe": "characters/Maple/32c2689c-0603-4376-9bb2-c06d29c8252c.recipe.json"
+    }
+  }
+}

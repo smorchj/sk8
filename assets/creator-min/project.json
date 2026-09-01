@@ -1,0 +1,50 @@
+{
+  "id": "4bc9710e-e034-42d7-8ea0-93c931606134",
+  "name": "sk8opia farm demo",
+  "assets": {
+    "hair": [
+      "Afro",
+      "Crop",
+      "LongerBob",
+      "MidLengthShag",
+      "TopKnot",
+      "Quiff",
+      "MessySlickBack",
+      "LongSlickBack",
+      "LongHair",
+      "LowBun"
+    ],
+    "bases": [
+      "venus",
+      "mars"
+    ],
+    "outfits": [
+      "mars__19th_century_farmer",
+      "venus__19th_century_rural_farmer_male_clothes",
+      "mars__Bunad",
+      "mars__19TH_century_farmers_dress",
+      "venus__Early_19th_Century_Rural_Working_Dress",
+      "mars__Bunad_Dress",
+      "venus__Bunad",
+      "venus__Bunad_Herre",
+      "mars__Crop-top_jeans_and_sneakers",
+      "venus__crop-top_jeans_and_sneakers",
+      "mars__Casual_White_T-shirt",
+      "venus__Casual_white_t-shirt_and_jeans",
+      "mars__Prisoner",
+      "venus__Prison_Jumpsuit"
+    ],
+    "presets": [
+      "Steve",
+      "Cander",
+      "Ember",
+      "Liu",
+      "Charles",
+      "Peble",
+      "Willow",
+      "Heiring",
+      "Kari",
+      "Maple"
+    ]
+  }
+}

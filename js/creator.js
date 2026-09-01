@@ -6,7 +6,7 @@
 // your skater is, and the whole animation/input pipeline mirrors around it.
 
 const PROJECT_KEY = 'ggc_proj_8jmuxeXblEF5oa59vumsjBDqbR7C3Xvz-1vrhFv-mDM';
-const ASSETS = 'assets/creator/';
+const ASSETS = 'assets/creator-min/';   // plain-optimized bundle (tools/optimize-plain.mjs)
 const SAVE_KEY = 'sk8rider';
 
 const HAIR_COLORS = ['#151210', '#3b2a1d', '#6b4a2b', '#a97f4f', '#d9b380', '#b03030', '#888c92'];

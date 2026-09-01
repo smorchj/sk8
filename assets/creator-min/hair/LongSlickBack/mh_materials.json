@@ -1,0 +1,35 @@
+{
+ "materials": [
+  {
+   "material_name": "hair",
+   "mesh": "LongSlickBack_CardsMesh",
+   "slot_index": 0,
+   "material_source": "artstation-longslickback",
+   "kind": "hair",
+   "face_slot": null,
+   "params": {
+    "base_color": [
+     0.045,
+     0.025,
+     0.015,
+     1
+    ],
+    "roughness": 0.5,
+    "alpha_clip": true,
+    "alpha_channel": "r",
+    "ignore_gltf_map": true,
+    "alpha_stem": "LongSlickBack_CardsAtlas_Attribute",
+    "hair_density": 1.3,
+    "hair_roughness_floor": 0.62,
+    "root_darkening": 0,
+    "seed_variation": 0.36,
+    "hair_roughness_seed_amp": 0.08,
+    "blend_opacity": 0.3,
+    "blend_roughness": 0.84
+   },
+   "textures": {
+    "alpha_r": "textures/LongSlickBack_CardsAtlas_Attribute.png"
+   }
+  }
+ ]
+}

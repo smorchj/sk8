@@ -22,9 +22,11 @@ SOFTWARE.
 
 ---
 
-NOTE ON CHARACTERS: this license covers the game code, the mocap trick
+NOTE ON CHARACTERS: this MIT license covers the game code, the mocap trick
 animations (assets/anims), the skateboard model, and the trick pipeline
-(pipeline/). It does NOT cover the rider characters, outfits, hair or
-basemeshes — those are not in this repository. They are served by the
-creategamecharacters.ai SDK and carry that platform's licensing:
-https://creategamecharacters.com/agent/integration/licensing.md
+(pipeline/). It does NOT cover assets/creator-min — the rider characters,
+outfits, hair, basemeshes and the embedded creator SDK. Those were made with
+and are licensed by creategamecharacters.ai (use in free games is permitted
+under the platform's license; see
+https://creategamecharacters.com/agent/integration/licensing.md).
+They are included here so the published game is playable as-is.

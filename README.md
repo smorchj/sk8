@@ -55,20 +55,24 @@ outfits, **your stance**, and per-trick skill levels.
 
 ## Characters
 
-Riders are spawned at runtime by the
-[creategamecharacters.ai](https://creategamecharacters.ai) embedded SDK —
-nothing baked, a character is a recipe. The character assets (basemeshes,
-outfits, hair) are **not in this repo** and are **not MIT**: they carry the
-platform's [licensing](https://creategamecharacters.com/agent/integration/licensing.md).
+The riders are living characters made with
+[creategamecharacters.ai](https://creategamecharacters.ai) and spawned at
+runtime by its embedded SDK — nothing baked, a character is a recipe: pick a
+preset, blend bodies, swap hair and outfits, all in-game. The bundled assets
+(`assets/creator-min/`) are included so the published game plays as-is; they
+are **not MIT** — they carry the platform's
+[licensing](https://creategamecharacters.com/agent/integration/licensing.md)
+(free-game use permitted).
 
-To run with your own project:
+**Want your own riders?** Make them with the app, then:
 
-1. Create a project at creategamecharacters.ai, note its id, mint a
-   **read key** (`ggc_read_…`) at `/profile.html` and a **publishable key**
-   (`ggc_proj_…`) with your origins allowlisted.
-2. Fetch your project bundle (build-time, one-shot):
+1. Create a project at creategamecharacters.ai, mint a **read key**
+   (`ggc_read_…`) at `/profile.html` — keep it out of your repo — and a
+   **publishable key** (`ggc_proj_…`) with your origins allowlisted.
+2. Fetch your project bundle (build-time, one-shot), then optimize it:
    ```bash
    node tools/fetch-assets.mjs --project <your-project-id> --key <ggc_read_...> --out assets/creator
+   node tools/optimize-plain.mjs assets/creator assets/creator-min
    ```
 3. Put your publishable key in `js/creator.js`.
 
