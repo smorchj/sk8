@@ -29,6 +29,8 @@ export class Input {
     this._keys = new Set();
     this._trickPtr = null;        // {id, samples:[{t,x,y}]}
     this._steerPtr = null;        // {id, x0}
+    this._edgePtr = null;         // {id, dir} — touch-hold on a screen edge while AIRBORNE = spin
+    this._edgeSteer = 0;
     this._lastUpperTap = 0;
 
     this._canvas = document.getElementById('gesture');
@@ -59,6 +61,15 @@ export class Input {
   _down(e) {
     if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel')) return;
     const isTouch = e.pointerType === 'touch';
+    // touch, AIRBORNE: hold a screen EDGE to spin (owner: no way to 180 on
+    // phone otherwise). Left edge spins left, right edge right; release stops.
+    if (isTouch && this.cb.isAirborne?.() &&
+      (e.clientX < innerWidth * 0.15 || e.clientX > innerWidth * 0.85)) {
+      if (this._edgePtr) return;
+      this._edgePtr = { id: e.pointerId, dir: e.clientX < innerWidth * 0.15 ? -1 : 1 };
+      this._edgeSteer = this._edgePtr.dir;
+      return;
+    }
     // mouse/pen: any click on the world = wind-up hold. touch: lower pad only.
     if (!isTouch || this._inPad(e.clientY)) {
       if (this._trickPtr) return;
@@ -98,6 +109,11 @@ export class Input {
   }
 
   _up(e, cancelled = false) {
+    if (this._edgePtr && e.pointerId === this._edgePtr.id) {
+      this._edgePtr = null;
+      this._edgeSteer = 0;
+      return;
+    }
     if (this._trickPtr && e.pointerId === this._trickPtr.id) {
       const samples = this._trickPtr.samples;
       this._trickPtr = null;
@@ -199,6 +215,7 @@ export class Input {
     if (this._keys.has('a') || this._keys.has('arrowleft')) s -= 1;
     if (this._keys.has('d') || this._keys.has('arrowright')) s += 1;
     if (this._dragSteer) s += this._dragSteer;
+    s += this._edgeSteer;
     this.steer = Math.max(-1, Math.min(1, s));
 
     // gesture trail

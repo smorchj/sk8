@@ -266,6 +266,7 @@ const input = new Input({
   push: () => anim.pushStroke(),
   pushStart: () => anim.pushStart(),
   pushEnd: () => anim.pushEnd(),
+  isAirborne: () => !physics.grounded,
   revert: (d) => anim.revert(d),
   brake: (on) => { physics.braking = on; },
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },
