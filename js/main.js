@@ -332,16 +332,41 @@ function updateCamera(dt) {
     lookPitch *= relax;
   }
   _lookDir.copy(_travel).applyAxisAngle(_up, lookYaw);
+
+  // Skate-style framing (owner, 2026-09-02): sit a bit OFF to the rider's
+  // chest side (3/4 view instead of a static tail-cam), lead the look ahead
+  // of the motion, breathe with speed, and roll gently with the carve.
+  const sp = physics.speed();
+  // chest side relative to travel: regular nose-first = right; flips with
+  // stance and with fakie — and it's travel-based, so air spins don't swing it
+  const sideSign = (stance === 'regular' ? 1 : -1) * physics.rollSign;
+  _sideDir.set(_lookDir.z, 0, -_lookDir.x);              // right of travel
+  const dist = 3.1 + sp * 0.11;
   const want = new THREE.Vector3().copy(physics.pos)
-    .addScaledVector(_lookDir, -3.8).add(new THREE.Vector3(0, 1.55 + lookPitch * 2.2, 0));
-  const k = 1 - Math.exp(-dt * 4.5);
-  camPos.lerp(want, k);
+    .addScaledVector(_lookDir, -dist)
+    .addScaledVector(_sideDir, sideSign * 0.85)
+    .add(new THREE.Vector3(0, 1.35 + lookPitch * 2.2, 0));
+  camPos.lerp(want, 1 - Math.exp(-dt * 3.3));            // lazier, springier
   camera.position.copy(camPos);
-  camLook.lerp(new THREE.Vector3().copy(physics.pos).add(new THREE.Vector3(0, 0.9, 0)), 1 - Math.exp(-dt * 7));
+  const lookTarget = new THREE.Vector3().copy(physics.pos)
+    .addScaledVector(_lookDir, 1.2)                       // lead the motion
+    .addScaledVector(_sideDir, sideSign * 0.12)
+    .add(new THREE.Vector3(0, 0.85, 0));
+  camLook.lerp(lookTarget, 1 - Math.exp(-dt * 5.5));
   camera.lookAt(camLook);
+  // carve roll + speed FOV breathing
+  camRoll += ((-input.steer * 0.045) - camRoll) * (1 - Math.exp(-dt * 4));
+  camera.rotateZ(camRoll);
+  const wantFov = 55 + Math.min(10, sp * 0.85);
+  if (Math.abs(camera.fov - wantFov) > 0.05) {
+    camera.fov += (wantFov - camera.fov) * (1 - Math.exp(-dt * 2.5));
+    camera.updateProjectionMatrix();
+  }
 }
 const _lookDir = new THREE.Vector3();
+const _sideDir = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
+let camRoll = 0;
 
 // ── HUD ─────────────────────────────────────────────────────────────────────
 
