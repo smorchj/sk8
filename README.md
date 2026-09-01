@@ -1,5 +1,7 @@
 # sk8 — skate mechanics
 
+### ▶ [Play the demo](https://smorchj.github.io/sk8/)
+
 A Skate-style web skate game built on **real mocap tricks solved from skate
 footage**. This repo is the mechanics: the physics, the flick-it controls,
 the trick system, and the pipeline that turns skate videos into playable
