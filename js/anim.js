@@ -226,6 +226,19 @@ export class SkateAnim {
         : (t > STROKE_A && t < STROKE_B);
       // push clip's board bobs with the stroke; pin it to the ground plane
       if (pose.board) { pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y); }
+      // FAKIE PUSH (owner bug: after a 180 the push moonwalked): the stroke is
+      // authored toward the nose, but fakie travel is tail-first — so the RIDER
+      // turns 180° to stroke along travel while the board keeps its true,
+      // nose-backward orientation.
+      if (phys.rollSign < 0) {
+        if (pose.hipsPos) { pose.hipsPos[0] = -pose.hipsPos[0]; pose.hipsPos[2] = -pose.hipsPos[2]; }
+        if (pose.hipsRot) {
+          _q.setFromAxisAngle(_y, Math.PI);
+          _q2.fromArray(pose.hipsRot).premultiply(_q);
+          pose.hipsRot = [_q2.x, _q2.y, _q2.z, _q2.w];
+        }
+        if (pose.board) { pose.board.pos[0] = -pose.board.pos[0]; pose.board.pos[2] = -pose.board.pos[2]; }
+      }
       this._leanLayer(pose, steer);
       if (this.time >= clip.duration - 0.05) { phys.pushing = false; this._toState('ride'); }
     } else if (this.state === 'trick') {
