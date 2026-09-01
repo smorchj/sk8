@@ -54,7 +54,7 @@ export class SkateAnim {
     this.pushHeld = false;                // stroke keeps looping while true (keyboard hold)
     this._swipeHold = 0;                  // seconds of push left from the last swipe
     this._soleDy = 0;                     // smoothed mesh-level sole-to-deck correction
-    this._footDy = { L: 0, R: 0 };        // per-foot residual corrections (leg IK)
+    this._footFix = { L: new THREE.Vector3(), R: new THREE.Vector3() };  // per-foot board-space corrections
     this._dt = 1 / 60;
 
     // base riding pose: a straight-rolling moment of a clip whose nose axis is
@@ -466,9 +466,13 @@ export class SkateAnim {
     }
   }
 
-  // Grounded per-foot sole correction (owner, 2026-09-02: one body shift can't
-  // plant BOTH feet when the pose holds them at different heights — each foot
-  // gets its own vertical fix through its own leg, mesh-measured).
+  // Grounded per-foot placement retargeting (owner, 2026-09-02): body morphs
+  // move the feet off the deck — feminine hovered vertically, masculine's
+  // wider pelvis lands the WHOLE STANCE wide of the board. Each contacting
+  // foot's ankle is pulled onto the deck footprint (lateral toward the
+  // centreline, along-board within the deck) at its mesh-measured sole
+  // height; the leg IK absorbs the difference — a wide-hipped rider's legs
+  // simply angle inward, exactly like real bodies on a narrow board.
   groundFeetIK(rig, boardNode, soleData) {
     if (!soleData) return;
     let feet = null;
@@ -481,17 +485,28 @@ export class SkateAnim {
       feet = [sf];
     } else if (this.state === 'trick' && this.trick && !this.trick.popped) feet = ['L', 'R'];
     const k = 1 - Math.exp(-25 * this._dt);
+    const LAT = 0.055, LONG = 0.36;         // where ankles may sit on the deck
     for (const side of ['L', 'R']) {
-      const active = feet && feet.includes(side);
-      const d = active ? measureSoleDrop(soleData, boardNode, [side]) : 0;
-      const cur = this._footDy[side] += ((active ? d : 0) - this._footDy[side]) * k;
-      if (Math.abs(cur) < 0.002) continue;
+      const fix = this._footFix[side];
       const foot = rig.bones.get('Foot' + side);
-      if (!foot) continue;
-      const A = foot.getWorldPosition(_vg);
-      // shift the ankle along the board's up axis by the smoothed residual
-      _vh.set(0, 1, 0).applyQuaternion(boardNode.getWorldQuaternion(_qh));
-      this._legIK(rig, side, _vt.copy(A).addScaledVector(_vh, cur), 1);
+      const active = feet && feet.includes(side) && foot;
+      if (active) {
+        const A = foot.getWorldPosition(_vg);
+        _vh.copy(A);
+        boardNode.worldToLocal(_vh);        // ankle in board space
+        _vt.set(
+          Math.min(LAT, Math.max(-LAT, _vh.x)) - _vh.x,
+          measureSoleDrop(soleData, boardNode, [side]),
+          Math.min(LONG, Math.max(-LONG, _vh.z)) - _vh.z,
+        );
+        fix.lerp(_vt, k);
+        if (fix.lengthSq() > 4e-6) {
+          _vt.copy(_vh).add(fix);
+          this._legIK(rig, side, boardNode.localToWorld(_vt), 1);
+        }
+      } else {
+        fix.lerp(_vz, k);                   // decay toward zero when free
+      }
     }
   }
 
@@ -632,3 +647,4 @@ const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qc = new THRE
 const _qd = new THREE.Quaternion(), _qe = new THREE.Quaternion(), _qf = new THREE.Quaternion();
 const _qg = new THREE.Quaternion(), _qh = new THREE.Quaternion(), _qi = new THREE.Quaternion();
 const _vt = new THREE.Vector3();
+const _vz = new THREE.Vector3(0, 0, 0);
