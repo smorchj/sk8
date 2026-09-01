@@ -15,7 +15,12 @@ export const DECK_HALF_X = 0.17;         // contact footprint (a little forgivin
 export const DECK_HALF_Z = 0.45;
 
 const FOOT_RE = { L: /^(Foot|Ball|Toe)L$/, R: /^(Foot|Ball|Toe)R$/ };
-const KEEP = 24;                         // lowest sole candidates kept per foot
+const SHELL = 0.035;                     // sole shell: everything within 3.5cm of the
+                                         // foot's lowest point (covers the toe rim —
+                                         // toe spring curves it up at rest, and long
+                                         // masculine toes were escaping the old
+                                         // lowest-N pick and poking through the wrap)
+const KEEP = 80;
 
 const _v = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -53,7 +58,10 @@ export function buildSoleData(charScene, rig) {
   const out = { L: [], R: [] };
   for (const side of ['L', 'R']) {
     cands[side].sort((a, b) => a.y - b.y);
-    for (const c of cands[side].slice(0, KEEP)) {
+    const lo = cands[side].length ? cands[side][0].y : 0;
+    const shell = cands[side].filter(c => c.y <= lo + SHELL);
+    const step = Math.max(1, Math.ceil(shell.length / KEEP));
+    for (const c of shell.filter((_, i) => i % step === 0)) {
       const bone = rig.bones.get(c.bn);
       if (!bone) continue;
       _m.copy(bone.matrixWorld).invert();

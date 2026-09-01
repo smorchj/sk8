@@ -317,7 +317,11 @@ export class SkateAnim {
             // until the deepest point sits on the face. No constants to tune.
             const sd = this._soleRef && this._soleRef[backBone];
             if (sd && sd.length) {
-              let minD = Infinity;
+              // The wrap is end-over-end: half the cycle the face legitimately
+              // points AWAY from the foot. Only sole points in the shallow
+              // CONTACT BAND just behind the face are real pokes — resolve
+              // those; leave the far-side phase alone.
+              let minD = 0;
               for (const c of sd) {
                 const bn = c.bone.name.replace(/[^A-Za-z0-9_]/g, '');
                 const f = chain.get(bn);
@@ -326,12 +330,13 @@ export class SkateAnim {
                 const d = (_vb.x - pose.board.pos[0]) * _va.x
                   + (_vb.y - pose.board.pos[1]) * _va.y
                   + (_vb.z - pose.board.pos[2]) * _va.z - 0.07;
-                if (d < minD) minD = d;
+                if (d > -0.10 && d < minD) minD = d;
               }
-              if (minD < 0 && minD !== Infinity) {
-                pose.board.pos[0] += _va.x * minD * w;
-                pose.board.pos[1] += _va.y * minD * w;
-                pose.board.pos[2] += _va.z * minD * w;
+              if (minD < 0) {
+                const pw = Math.min(1, w * 2);   // penetration resolves at full
+                pose.board.pos[0] += _va.x * minD * pw;   // strength even while
+                pose.board.pos[1] += _va.y * minD * pw;   // the pin still ramps
+                pose.board.pos[2] += _va.z * minD * pw;
               }
             }
           }
