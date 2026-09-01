@@ -302,8 +302,15 @@ export class SkateAnim {
           if (foot) {
             _q.fromArray(pose.board.quat);
             _v.set(0, 0.02, tr.clip.wrapPivotZ).applyQuaternion(_q);
-            const dx = foot.pos.x - (pose.board.pos[0] + _v.x);
-            const dz = foot.pos.z - (pose.board.pos[2] + _v.z);
+            // the deck's TOP SURFACE meets the SOLE — the bone sits inside the
+            // shoe, so pin the surface a shoe-gap below the bone along the
+            // deck-top normal (owner: foot poked through the wrapping board)
+            const SOLE_GAP = 0.065;
+            _va.set(0, 1, 0).applyQuaternion(_q);
+            const tx = foot.pos.x - _va.x * SOLE_GAP;
+            const tz = foot.pos.z - _va.z * SOLE_GAP;
+            const dx = tx - (pose.board.pos[0] + _v.x);
+            const dz = tz - (pose.board.pos[2] + _v.z);
             const lim = 0.3;
             pose.board.pos[0] += Math.min(lim, Math.max(-lim, dx)) * w;
             pose.board.pos[2] += Math.min(lim, Math.max(-lim, dz)) * w;
