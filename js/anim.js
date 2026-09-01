@@ -54,6 +54,7 @@ export class SkateAnim {
     this.pushHeld = false;                // stroke keeps looping while true (keyboard hold)
     this._swipeHold = 0;                  // seconds of push left from the last swipe
     this._soleDy = 0;                     // smoothed mesh-level sole-to-deck correction
+    this._footDy = { L: 0, R: 0 };        // per-foot residual corrections (leg IK)
     this._dt = 1 / 60;
 
     // base riding pose: a straight-rolling moment of a clip whose nose axis is
@@ -395,21 +396,29 @@ export class SkateAnim {
     if (!pd || pd.w <= 0.001) return;
     playerRoot.updateMatrixWorld(true);
     for (const side of ['L', 'R']) {
-      const up = rig.bones.get('UpperLeg' + side);
-      const low = rig.bones.get('LowerLeg' + side);
-      const foot = rig.bones.get('Foot' + side);
-      if (!up || !low || !foot) continue;
-
       const tLocal = pd.land[side].clone().lerp(pd.ride[side], pd.mix);
       tLocal.y += this._soleDy;            // ankle targets ride the sole calibration
       const T = boardNode.localToWorld(tLocal);
+      this._legIK(rig, side, T, pd.w);
+    }
+  }
+
+  // analytic two-bone leg IK on the REAL rendered bones: put this side's ankle
+  // at world target T, preserving the foot's world orientation. Shared by the
+  // landing plant and the grounded per-foot sole correction.
+  _legIK(rig, side, T, weight) {
+    {
+      const up = rig.bones.get('UpperLeg' + side);
+      const low = rig.bones.get('LowerLeg' + side);
+      const foot = rig.bones.get('Foot' + side);
+      if (!up || !low || !foot) return;
       const preUp = _qa.copy(up.quaternion), preLow = _qb.copy(low.quaternion), preFoot = _qc.copy(foot.quaternion);
       const H = up.getWorldPosition(_va);
       const K = low.getWorldPosition(_vb);
       const A = foot.getWorldPosition(_vc);
       const footWorldQ = foot.getWorldQuaternion(_qd);
       const L1 = H.distanceTo(K), L2 = K.distanceTo(A);
-      if (L1 < 1e-4 || L2 < 1e-4) continue;
+      if (L1 < 1e-4 || L2 < 1e-4) return;
       const d = Math.min(Math.max(T.distanceTo(H), Math.abs(L1 - L2) + 1e-3), L1 + L2 - 1e-3);
 
       // 1) knee bend so the hip→ankle distance matches the target distance
@@ -448,12 +457,41 @@ export class SkateAnim {
       foot.quaternion.copy(_qe.multiply(footWorldQ));
 
       // weight: ease the whole correction out during release
-      if (pd.w < 1) {
-        up.quaternion.copy(preUp.slerp(up.quaternion, pd.w));
-        low.quaternion.copy(preLow.slerp(low.quaternion, pd.w));
-        foot.quaternion.copy(preFoot.slerp(foot.quaternion, pd.w));
+      if (weight < 1) {
+        up.quaternion.copy(preUp.slerp(up.quaternion, weight));
+        low.quaternion.copy(preLow.slerp(low.quaternion, weight));
+        foot.quaternion.copy(preFoot.slerp(foot.quaternion, weight));
         up.updateMatrixWorld(true);
       }
+    }
+  }
+
+  // Grounded per-foot sole correction (owner, 2026-09-02: one body shift can't
+  // plant BOTH feet when the pose holds them at different heights — each foot
+  // gets its own vertical fix through its own leg, mesh-measured).
+  groundFeetIK(rig, boardNode, soleData) {
+    if (!soleData) return;
+    let feet = null;
+    if (this.state === 'ride' || this.state === 'windup') feet = ['L', 'R'];
+    else if (this.state === 'push') {
+      const info = this.clips.push.pushInfo;
+      const mirror = this.clips.push.stance !== this.stance;
+      let sf = info?.standFoot === 'FootL' ? 'L' : 'R';
+      if (mirror) sf = sf === 'L' ? 'R' : 'L';
+      feet = [sf];
+    } else if (this.state === 'trick' && this.trick && !this.trick.popped) feet = ['L', 'R'];
+    const k = 1 - Math.exp(-25 * this._dt);
+    for (const side of ['L', 'R']) {
+      const active = feet && feet.includes(side);
+      const d = active ? measureSoleDrop(soleData, boardNode, [side]) : 0;
+      const cur = this._footDy[side] += ((active ? d : 0) - this._footDy[side]) * k;
+      if (Math.abs(cur) < 0.002) continue;
+      const foot = rig.bones.get('Foot' + side);
+      if (!foot) continue;
+      const A = foot.getWorldPosition(_vg);
+      // shift the ankle along the board's up axis by the smoothed residual
+      _vh.set(0, 1, 0).applyQuaternion(boardNode.getWorldQuaternion(_qh));
+      this._legIK(rig, side, _vt.copy(A).addScaledVector(_vh, cur), 1);
     }
   }
 
@@ -593,3 +631,4 @@ const _vg = new THREE.Vector3(), _vh = new THREE.Vector3(), _vi = new THREE.Vect
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qc = new THREE.Quaternion();
 const _qd = new THREE.Quaternion(), _qe = new THREE.Quaternion(), _qf = new THREE.Quaternion();
 const _qg = new THREE.Quaternion(), _qh = new THREE.Quaternion(), _qi = new THREE.Quaternion();
+const _vt = new THREE.Vector3();

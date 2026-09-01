@@ -381,6 +381,7 @@ function tick(dt) {
   }
   rig.apply(buf);
   anim.soleAttach(rig, boardNode, soleData, playerRoot);   // mesh-level sole-to-deck contact
+  anim.groundFeetIK(rig, boardNode, soleData);     // per-foot residual planting
   anim.plantPostRig(rig, boardNode, playerRoot);   // landing feet-on-board invariant
 
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
