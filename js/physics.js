@@ -20,7 +20,8 @@ const STEER_RATE_HI = 0.85;    // rad/s at top speed
 const CARVE_SCRUB = 0.25;      // speed lost per rad of turning
 const GRIP = 14;               // 1/s — how fast lateral velocity dies (trucks grip)
 const LAND_DAMP = 0.955;       // speed kept on touchdown
-const AIR_SPIN_RATE = 4.2;     // rad/s of root spin from full steer while airborne
+const AIR_SPIN_RATE = 6.0;     // rad/s of root spin at full input while airborne
+                               // (fast enough that a skill-5 pop completes a 360)
 
 export class SkatePhysics {
   constructor() {
@@ -30,6 +31,7 @@ export class SkatePhysics {
     this.rollSign = 1;                       // +1 nose-first, -1 fakie
     this.grounded = true;
     this.steer = 0;                          // -1..1 (left..right of TRAVEL)
+    this.spin = 0;                           // extra air-spin input (touch edge-hold)
     this.braking = false;
     this.pushing = false;                    // set by anim ctrl during stroke window
     this.crouch = 0;                         // 0..1, driven by input hold
@@ -117,8 +119,11 @@ export class SkatePhysics {
       this.airTime += dt;
       this.vel.y -= G * dt;
       // in-air spins: steering rotates the WHOLE root (rider + board + clip),
-      // so any trick can go 180/360 (owner request — root must not be stuck)
-      this._steerSm += (this.steer - this._steerSm) * Math.min(1, dt * 8);
+      // so any trick can go 180/360 (owner request — root must not be stuck).
+      // `spin` is the touch edge-hold channel; drag/keys get boosted authority
+      // in the air so a held turn carries into a real spin.
+      const target = Math.max(-1, Math.min(1, this.steer * 1.5 + this.spin));
+      this._steerSm += (target - this._steerSm) * Math.min(1, dt * 8);
       const d = -this._steerSm * AIR_SPIN_RATE * dt;
       this.yaw += d;
       this.airSpin += d;

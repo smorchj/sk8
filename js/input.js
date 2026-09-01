@@ -61,12 +61,14 @@ export class Input {
   _down(e) {
     if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel')) return;
     const isTouch = e.pointerType === 'touch';
-    // touch, AIRBORNE: hold a screen EDGE to spin (owner: no way to 180 on
-    // phone otherwise). Left edge spins left, right edge right; release stops.
-    if (isTouch && this.cb.isAirborne?.() &&
-      (e.clientX < innerWidth * 0.15 || e.clientX > innerWidth * 0.85)) {
+    // touch: hold a screen EDGE to spin in the air (owner: no way to 180 on
+    // phone otherwise). Also armable DURING wind-up so the rotation starts the
+    // instant you pop — it feeds a separate spin channel that never steers the
+    // grounded board. Left edge spins left, right edge right; release stops.
+    if (isTouch && (this.cb.isAirborne?.() || this.holdingTrick) &&
+      (e.clientX < innerWidth * 0.20 || e.clientX > innerWidth * 0.80)) {
       if (this._edgePtr) return;
-      this._edgePtr = { id: e.pointerId, dir: e.clientX < innerWidth * 0.15 ? -1 : 1 };
+      this._edgePtr = { id: e.pointerId, dir: e.clientX < innerWidth * 0.20 ? -1 : 1 };
       this._edgeSteer = this._edgePtr.dir;
       return;
     }
@@ -104,7 +106,10 @@ export class Input {
         this.cb.push?.();
         return;
       }
-      if (!p.pushed) this._dragSteer = Math.max(-1, Math.min(1, dx / 110));
+      // a push-swipe drag that moves clearly sideways becomes a steer drag
+      // again (owner bug: the lock ate the turn, so an ollie never spun)
+      if (p.pushed && Math.abs(dx) > 45) { p.pushed = false; p.x0 = e.clientX; p.y0 = e.clientY; }
+      if (!p.pushed) this._dragSteer = Math.max(-1, Math.min(1, (e.clientX - p.x0) / 110));
     }
   }
 
@@ -215,8 +220,8 @@ export class Input {
     if (this._keys.has('a') || this._keys.has('arrowleft')) s -= 1;
     if (this._keys.has('d') || this._keys.has('arrowright')) s += 1;
     if (this._dragSteer) s += this._dragSteer;
-    s += this._edgeSteer;
     this.steer = Math.max(-1, Math.min(1, s));
+    this.spin = this._edgeSteer;          // edge-hold: air-spin only, never grounded steer
 
     // gesture trail
     const ctx = this._ctx, dpr = devicePixelRatio;

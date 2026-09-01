@@ -357,6 +357,7 @@ const clock = new THREE.Clock();
 function tick(dt) {
   input.update(dt);
   physics.steer = input.steer;
+  physics.spin = input.spin || 0;
   physics.update(dt);
 
   const buf = anim.update(dt, input.steer);
