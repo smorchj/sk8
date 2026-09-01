@@ -311,8 +311,15 @@ const _travel = new THREE.Vector3();
 
 function updateCamera(dt) {
   if (freecam) { controls.update(); return; }
-  physics.travelDir(_travel);
-  if (physics.speed() < 0.3) physics.noseDir(_travel).multiplyScalar(physics.rollSign);
+  // chase the VELOCITY direction, not the board yaw — during air spins (and
+  // revert skids) the board whirls while momentum doesn't, and the camera
+  // must ride the momentum (owner: 180s were jarring). rollSign flips on
+  // landing keep travelDir aligned with velocity, so there is no snap.
+  if (physics.speed() > 0.5) {
+    _travel.set(physics.vel.x, 0, physics.vel.z).normalize();
+  } else {
+    physics.travelDir(_travel);
+  }
   // free-look relaxes back to the chase view — but NEVER while winding up:
   // the camera must hold still from click to release (owner's spec)
   if (!input.holdingTrick) {
