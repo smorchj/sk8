@@ -70,7 +70,7 @@ export class Input {
       const now = performance.now();
       if (now - this._lastUpperTap < 280) this.cb.push?.();
       this._lastUpperTap = now;
-      this._steerPtr = { id: e.pointerId, x0: e.clientX };
+      this._steerPtr = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: now, pushed: false };
     }
   }
 
@@ -80,7 +80,20 @@ export class Input {
       if (this._trickPtr.samples.length > 400) this._trickPtr.samples.shift();
       this._fade = 1;
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
-      this._dragSteer = Math.max(-1, Math.min(1, (e.clientX - this._steerPtr.x0) / 110));
+      const p = this._steerPtr;
+      const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+      // PUSH SWIPE (mobile): a fast downward swipe on the left/right side of
+      // the screen = one push stroke. Re-arms so a continued downward rub
+      // keeps the strokes coming; steering is locked for that drag.
+      const onSide = p.x0 < innerWidth * 0.38 || p.x0 > innerWidth * 0.62;
+      if (onSide && dy > 55 && dy > Math.abs(dx) * 1.2 && performance.now() - p.t0 < 450) {
+        p.pushed = true;
+        p.x0 = e.clientX; p.y0 = e.clientY; p.t0 = performance.now();   // re-arm
+        this._dragSteer = 0;
+        this.cb.push?.();
+        return;
+      }
+      if (!p.pushed) this._dragSteer = Math.max(-1, Math.min(1, dx / 110));
     }
   }
 
@@ -157,8 +170,10 @@ export class Input {
       if (down) { this.holdingTrick = true; this.cb.windupStart?.(); }
       else { this.holdingTrick = false; this.cb.windupEnd?.({ type: 'ollie', strength: 1 }); }
     }
+    if (k === 'w') {
+      if (down) this.cb.pushStart?.(); else this.cb.pushEnd?.();
+    }
     if (down) {
-      if (k === 'w') this.cb.push?.();
       if (k === 'q') this.cb.revert?.(-1);
       if (k === 'e') this.cb.revert?.(1);
       if (k === 'k') this._directTrick('kickflip');

@@ -263,7 +263,9 @@ anim.onTrick = (label) => {
 const input = new Input({
   windupStart: () => anim.windupStart(),
   windupEnd: (g) => { lastGesture = g.type; anim.windupEnd(g); },
-  push: () => anim.push(),
+  push: () => anim.pushStroke(),
+  pushStart: () => anim.pushStart(),
+  pushEnd: () => anim.pushEnd(),
   revert: (d) => anim.revert(d),
   brake: (on) => { physics.braking = on; },
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },

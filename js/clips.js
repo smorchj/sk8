@@ -392,6 +392,8 @@ export class Clip {
       // loop the WHOLE stroke sequence (all pushes), wrapping at matching phase
       loopB: spans.length > 1 ? Math.max(0, spans[spans.length - 1].a - BACKSWING)
         : (spans.length ? Math.min(this.duration, spans[0].b + BACKSWING) : this.duration),
+      // where the step-back-on begins — the abort point when input stops
+      tailStart: spans.length ? Math.min(this.duration, spans[spans.length - 1].b + 0.06) : 0,
     };
 
     const g = new Float32Array(N * 3);

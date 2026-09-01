@@ -50,7 +50,8 @@ export class SkateAnim {
     this._fadeT = 0; this._fadeDur = FADE;
     this._snap = makeBuffer();
     this._booted = false;                 // first frame: no fade from the empty buffer
-    this.pushHeld = false;                // stroke keeps looping while true
+    this.pushHeld = false;                // stroke keeps looping while true (keyboard hold)
+    this._swipeHold = 0;                  // seconds of push left from the last swipe
 
     // base riding pose: a straight-rolling moment of a clip whose nose axis is
     // trustworthy (verified 2026-09-01 with foot markers; cruise is
@@ -96,10 +97,18 @@ export class SkateAnim {
 
   pushEnd() { this.pushHeld = false; }
 
-  push() {              // one-shot (touch double-tap): a single stroke
-    this.pushStart();
-    this.pushHeld = false;
+  // one down-swipe (mobile) = keep pushing for a beat; keep swiping = the clip
+  // keeps rolling through ALL its strokes; stop swiping = step back on
+  pushStroke() {
+    if (!this.phys.grounded) return;
+    this._swipeHold = 0.75;
+    if (this.state === 'ride' && Math.abs(this._alongNose()) < 6.5) {
+      this._toState('push');
+      this.time = this.clips.push.pushInfo?.loopA ?? 0.2;
+    }
   }
+
+  push() { this.pushStroke(); }   // compat alias
 
   revert(dir) {
     if (!this.phys.grounded) return;
@@ -215,8 +224,19 @@ export class SkateAnim {
       const clip = this.clips.push;
       const info = clip.pushInfo;
       this.time += dt;
-      if (info && this.time >= info.loopB && this.pushHeld && phys.speed() < 8.2) {
+      this._swipeHold = Math.max(0, this._swipeHold - dt);
+      const held = this.pushHeld || this._swipeHold > 0;
+      if (info && this.time >= info.loopB && held && phys.speed() < 8.2) {
         this.time = info.loopA + (this.time - info.loopB);   // next stroke, same phase
+      }
+      // input stopped: step back on NOW — jump to the tail with a short fade
+      // instead of playing the remaining strokes (owner spec)
+      if (info && !held && this.time < info.tailStart) {
+        blendBuffers(this._snap, this.out, this.out, 0);
+        this._fadeFrom = this._snap;
+        this._fadeT = 0;
+        this._fadeDur = 0.15;
+        this.time = info.tailStart;
       }
       const t = Math.min(this.time, clip.duration - 0.034);
       const mirror = clip.stance !== this.stance;
