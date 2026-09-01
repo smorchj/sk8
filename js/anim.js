@@ -297,23 +297,43 @@ export class SkateAnim {
         if (w > 0.001) {
           const backBone = (this.stance === 'regular') ? 'R' : 'L';
           const getD = (bn) => pose.bones.get(bn) || null;
-          const chain = fkChain(this.skel, ['Ball' + backBone, 'Foot' + backBone], getD, pose.hipsPos, pose.hipsRot);
+          const chain = fkChain(this.skel,
+            ['Toe' + backBone, 'Ball' + backBone, 'Foot' + backBone], getD, pose.hipsPos, pose.hipsRot);
           const foot = chain.get('Ball' + backBone) || chain.get('Foot' + backBone);
           if (foot) {
             _q.fromArray(pose.board.quat);
             _v.set(0, 0.02, tr.clip.wrapPivotZ).applyQuaternion(_q);
-            // the deck's TOP SURFACE meets the SOLE — the bone sits inside the
-            // shoe, so pin the surface a shoe-gap below the bone along the
-            // deck-top normal (owner: foot poked through the wrapping board)
-            const SOLE_GAP = 0.065;
-            _va.set(0, 1, 0).applyQuaternion(_q);
-            const tx = foot.pos.x - _va.x * SOLE_GAP;
-            const tz = foot.pos.z - _va.z * SOLE_GAP;
+            _va.set(0, 1, 0).applyQuaternion(_q);       // deck-top normal
+            const tx = foot.pos.x - _va.x * 0.05;       // rough pre-position…
+            const tz = foot.pos.z - _va.z * 0.05;
             const dx = tx - (pose.board.pos[0] + _v.x);
             const dz = tz - (pose.board.pos[2] + _v.z);
             const lim = 0.3;
             pose.board.pos[0] += Math.min(lim, Math.max(-lim, dx)) * w;
             pose.board.pos[2] += Math.min(lim, Math.max(-lim, dz)) * w;
+            // …then an EXACT surface resolve (owner: still poking through on
+            // both ends): transform this character's measured sole vertices by
+            // the current pose and push the board out along its deck normal
+            // until the deepest point sits on the face. No constants to tune.
+            const sd = this._soleRef && this._soleRef[backBone];
+            if (sd && sd.length) {
+              let minD = Infinity;
+              for (const c of sd) {
+                const bn = c.bone.name.replace(/[^A-Za-z0-9_]/g, '');
+                const f = chain.get(bn);
+                if (!f) continue;
+                _vb.copy(c.p).applyQuaternion(f.quat).add(f.pos);
+                const d = (_vb.x - pose.board.pos[0]) * _va.x
+                  + (_vb.y - pose.board.pos[1]) * _va.y
+                  + (_vb.z - pose.board.pos[2]) * _va.z - 0.07;
+                if (d < minD) minD = d;
+              }
+              if (minD < 0 && minD !== Infinity) {
+                pose.board.pos[0] += _va.x * minD * w;
+                pose.board.pos[1] += _va.y * minD * w;
+                pose.board.pos[2] += _va.z * minD * w;
+              }
+            }
           }
         }
       }
@@ -591,6 +611,7 @@ export class SkateAnim {
   // (flips must separate). Runs after the IK plant; the plant's targets carry
   // the same offset so the two never fight.
   soleAttach(rig, boardNode, soleData, playerRoot) {
+    this._soleRef = soleData;             // also used by the wrap surface resolve
     // bone matrixWorlds are stale from the LAST render (they'd include last
     // frame's shift and the correction would converge to half) — refresh the
     // freshly-applied raw pose before measuring
