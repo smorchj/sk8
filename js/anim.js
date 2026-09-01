@@ -286,6 +286,30 @@ export class SkateAnim {
       if (!tr.popped && pose.board) {     // wind-in: board glued to the ground
         pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y);
       }
+      // wrap-pivot retarget (impossible): re-pin the board's orbit to the
+      // RENDERED back foot so the wrap clears any body's stance
+      if (tr.popped && pose.board && tr.clip.wrapPivotZ != null && this.skel) {
+        const tg = tr.clip.tags;
+        const w =
+          tr.t < tg.wrap ? Math.max(0, (tr.t - tg.pop) / Math.max(0.03, tg.wrap - tg.pop)) :
+          tr.t < tg.catch - 0.05 ? 1 :
+          Math.max(0, (tg.land - tr.t) / Math.max(0.03, tg.land - (tg.catch - 0.05)));
+        if (w > 0.001) {
+          const backBone = (this.stance === 'regular') ? 'R' : 'L';
+          const getD = (bn) => pose.bones.get(bn) || null;
+          const chain = fkChain(this.skel, ['Ball' + backBone, 'Foot' + backBone], getD, pose.hipsPos, pose.hipsRot);
+          const foot = chain.get('Ball' + backBone) || chain.get('Foot' + backBone);
+          if (foot) {
+            _q.fromArray(pose.board.quat);
+            _v.set(0, 0.02, tr.clip.wrapPivotZ).applyQuaternion(_q);
+            const dx = foot.pos.x - (pose.board.pos[0] + _v.x);
+            const dz = foot.pos.z - (pose.board.pos[2] + _v.z);
+            const lim = 0.3;
+            pose.board.pos[0] += Math.min(lim, Math.max(-lim, dx)) * w;
+            pose.board.pos[2] += Math.min(lim, Math.max(-lim, dz)) * w;
+          }
+        }
+      }
     } else if (this.state === 'landing') {
       const tr = this.trick;
       tr.t += dt;

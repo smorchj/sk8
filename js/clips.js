@@ -300,6 +300,35 @@ export class Clip {
     this._raw = { bones, hipsW, boardPosW, boardQuatW, g };
     this.variants = {};
     this.variant(false);                  // prebake the default variant
+
+    // wrap tricks (impossible): find the board-local point that moves LEAST
+    // between wrap and catch — that's the orbit pivot, i.e. where the capture
+    // skater's back foot was. The game re-pins it to the rendered back foot
+    // so the wrap clears any body (owner, 2026-09-02: masc leg-through-board).
+    this.wrapPivotZ = null;
+    if (this.tags.wrap != null && this.tags.catch != null) {
+      const v = this.variant(false);       // the default-played variant (swap-aware)
+      const i0 = Math.max(0, Math.round(this.tags.wrap * FPS));
+      const i1 = Math.min(this.frames - 1, Math.round(this.tags.catch * FPS));
+      let bestZ = 0, bestVar = Infinity;
+      for (let zi = -8; zi <= 8; zi++) {
+        const z = zi * 0.05;
+        let mx = 0, my = 0, mz = 0, n = 0;
+        const pts = [];
+        for (let i = i0; i <= i1; i++) {
+          _q.set(v.boardQuat[i * 4], v.boardQuat[i * 4 + 1], v.boardQuat[i * 4 + 2], v.boardQuat[i * 4 + 3]);
+          _v.set(0, 0.02, z).applyQuaternion(_q);
+          _v.x += v.boardPos[i * 3]; _v.y += v.boardPos[i * 3 + 1]; _v.z += v.boardPos[i * 3 + 2];
+          pts.push([_v.x, _v.y, _v.z]);
+          mx += _v.x; my += _v.y; mz += _v.z; n++;
+        }
+        mx /= n; my /= n; mz /= n;
+        let va = 0;
+        for (const p of pts) va += (p[0] - mx) ** 2 + (p[1] - my) ** 2 + (p[2] - mz) ** 2;
+        if (va < bestVar) { bestVar = va; bestZ = z; }
+      }
+      this.wrapPivotZ = bestZ;
+    }
   }
 
   _resolveNose(bPos, bQuat, N) {
