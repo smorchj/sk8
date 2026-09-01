@@ -1,8 +1,9 @@
-# sk8 — Norwegian farm skate demo
+# sk8 — skate mechanics
 
 A Skate-style web skate game built on **real mocap tricks solved from skate
-footage**. Part one of a wackier whole: sweet skate physics first, the farm,
-the story and the world come next.
+footage**. This repo is the mechanics: the physics, the flick-it controls,
+the trick system, and the pipeline that turns skate videos into playable
+tricks.
 
 Everything here — the mechanics, the trick animations, the video→trick
 pipeline — is open source (MIT). The riders are living characters from
@@ -49,8 +50,8 @@ brake · hold `SPACE`/click = wind up, release/flick = trick · `K/H/I/T`
 direct tricks · `Q/E` revert · `B` verification markers · `C` freecam ·
 `X` slow-mo · `R` reset.
 
-Rider ▸ opens the in-game character creator: presets, hair, body, the Bunad
-and farmer outfits, **your stance**, and per-trick skill levels.
+Rider ▸ opens the in-game character creator: presets, hair, body, skate-themed
+outfits, **your stance**, and per-trick skill levels.
 
 ## Characters
 

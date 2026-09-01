@@ -11,6 +11,10 @@ const SAVE_KEY = 'sk8rider';
 
 const HAIR_COLORS = ['#151210', '#3b2a1d', '#6b4a2b', '#a97f4f', '#d9b380', '#b03030', '#888c92'];
 
+// This repo is the MECHANICS demo — skate-themed clothing only (owner,
+// 2026-09-01). The period outfits belong to the story game, not here.
+const OUTFIT_ALLOW = /crop-top|casual|prison/i;
+
 const pretty = (id) => String(id).replace(/^((mars|venus)__)/, '').replace(/_/g, ' ');
 
 export class RiderCreator {
@@ -47,9 +51,13 @@ export class RiderCreator {
   // spawn (or respawn) the character from this.state and hand it to the game
   async _apply() {
     const cr = await this._ensureSDK();
+    const outfits = cr.outfitIds.filter(o => OUTFIT_ALLOW.test(o));
     if (!this.state.preset && cr.presetIds.length) this.state.preset = cr.presetIds[0];
     if (!this.state.hair && cr.hairIds.length) this.state.hair = cr.hairIds[0];
-    if (!this.state.outfit && cr.outfitIds.length) this.state.outfit = cr.outfitIds[0];
+    if (this.state.outfit && !OUTFIT_ALLOW.test(this.state.outfit)) this.state.outfit = null;
+    if (!this.state.outfit && outfits.length) {
+      this.state.outfit = outfits.find(o => /casual/i.test(o)) || outfits[0];
+    }
     if (!this.char) {
       this.char = cr.spawn({ body: this.state.body });
       await this.o.onCharacter(this.char.object3D, this.char);   // game wiring (rig, clip bake) must finish
@@ -123,7 +131,7 @@ export class RiderCreator {
     rows.push(`<div class="row" data-group="hairColor" style="margin-top:6px">${HAIR_COLORS.map(c =>
       `<button data-v="${c}" title="${c}" style="width:26px;height:26px;background:${c};${st.hairColor === c ? 'outline:2px solid #3d6dff;' : ''}"></button>`).join('')}</div>`);
 
-    rows.push(`<h3>Outfit</h3><div class="row" data-group="outfit">${cr.outfitIds.map(o =>
+    rows.push(`<h3>Outfit</h3><div class="row" data-group="outfit">${cr.outfitIds.filter(o => OUTFIT_ALLOW.test(o)).map(o =>
       `<button data-v="${o}" class="${st.outfit === o ? 'active' : ''}">${pretty(o)}</button>`).join('')}</div>`);
 
     if (this.o.getSkills) {

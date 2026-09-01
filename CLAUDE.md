@@ -1,6 +1,8 @@
-# sk8 — Norwegian farm skate demo
+# sk8 — skate mechanics (open source)
 
-Skate-style (EA Skate feel) web skate game. Part 1 = characters + skating physics.
+Skate-style (EA Skate feel) web skate game. THIS REPO = the mechanics demo
+only (physics, tricks, controls, pipeline) with SKATE-THEMED clothing; the
+wacky Norwegian-farm story game is the larger project it feeds (not here).
 Characters/animations come from creategamecharacters.ai (the owner's own site).
 
 ## LAW ZERO (inherited from Desktop/skateboard-demo/SKATE.md)
