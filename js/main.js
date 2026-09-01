@@ -339,7 +339,7 @@ function updateCamera(dt) {
   const sp = physics.speed();
   // chest side relative to travel: regular nose-first = right; flips with
   // stance and with fakie — and it's travel-based, so air spins don't swing it
-  const sideSign = (stance === 'regular' ? 1 : -1) * physics.rollSign;
+  const sideSign = (stance === 'regular' ? -1 : 1) * physics.rollSign;
   _sideDir.set(_lookDir.z, 0, -_lookDir.x);              // right of travel
   const dist = 3.1 + sp * 0.11;
   const want = new THREE.Vector3().copy(physics.pos)
