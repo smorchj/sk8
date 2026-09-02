@@ -66,6 +66,7 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 const _n = new THREE.Vector3(), _f = new THREE.Vector3(), _g = new THREE.Vector3();
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _x = new THREE.Vector3();
 const _lat = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _dn = new THREE.Vector3();
+const _qs = new THREE.Quaternion();
 
 export class SkatePhysics {
   constructor(world = null) {
@@ -141,13 +142,17 @@ export class SkatePhysics {
     // ollie AT the coping is the move, and the clip's pop tag lands late
     if (!this.grounded && this.airTime > POP_GRACE) return;
     if (!this.grounded) { this.vel.y += vy; return; }
+    // (on a transition collider any real slope launches vert; a halfpipe's
+    // flat bottom has no horizontal normal and pops like flat ground)
     const onRamp = /^ramp/.test(this.surface || '');
-    if (this.up.y < 0.6 || (onRamp && this.up.y < 0.97)) {
+    const horiz = Math.hypot(this.up.x, this.up.z);
+    if (this.up.y < 0.6 || (onRamp && (horiz > 0.12 || this.surfaceFace))) {
       // popping ON a transition: a vert air with extra height — the momentum
       // that was carrying the board into the ramp is dropped, the same as at
       // the lip (owner: "I almost always ollie over and end up behind"). On
-      // a quarter pipe that holds for the whole curve except its flat foot.
-      this._leaveVert();
+      // a quarter pipe that holds for the whole curve, its flat foot included
+      // (the collider knows which way its face points).
+      this._leaveVert(horiz > 0.12 ? null : this.surfaceFace);
       this.vel.y += vy * (0.55 + 0.45 * Math.max(0, this.up.y));
       return;
     }
@@ -296,6 +301,17 @@ export class SkatePhysics {
     this.forward.copy(_f.normalize());
   }
 
+  // keep the CURRENT facing (not the heading) on the plane of `up`, and let
+  // the heading follow it — used in the air and on touchdown so a spin is
+  // even and a landing never snaps
+  _keepForward() {
+    _f.copy(this.forward).addScaledVector(this.up, -this.forward.dot(this.up));
+    if (_f.lengthSq() < 0.04) { this._surfaceForward(); return; }
+    this.forward.copy(_f.normalize());
+    const h = Math.hypot(this.forward.x, this.forward.z);
+    if (h > 0.25) this.yaw = Math.atan2(this.forward.x, this.forward.z);
+  }
+
   _stepGround(dt) {
     const up = this.up, vel = this.vel;
     this._surfaceForward();
@@ -433,6 +449,7 @@ export class SkatePhysics {
         vel.addScaledVector(up, -vel.dot(up));
         this.groundY = this.pos.y;
         this.surface = hit.object.userData.collider || null;
+        this.surfaceFace = hit.object.userData.faceWorld || null;
       } else {
         this.lastLeave = { why: 'no-surface', speed: +vel.length().toFixed(2), pos: this.pos.toArray().map(v => +v.toFixed(2)), up: up.toArray().map(v => +v.toFixed(2)), surface: this.surface };
         this._leave();                 // the surface ended: a lip, a ledge, a drop
@@ -447,14 +464,14 @@ export class SkatePhysics {
   // way): the tangent velocity already points up the face; remember the
   // face so the air can be guided back into it and the rider comes down on
   // the transition — fakie unless they spin.
-  // leave as a vert air whatever the steepness (a pop on a transition)
-  _leaveVert() {
-    const keep = this.up.y;
-    this.up.y = Math.min(this.up.y, 0.59);
-    this.up.normalize();
+  // leave as a vert air whatever the steepness (a pop on a transition);
+  // `outDir` overrides the face direction when the normal is nearly vertical
+  _leaveVert(outDir = null) {
+    const keep = this.up.clone();
+    if (outDir) this.up.set(outDir.x, 0.5, outDir.z).normalize();
+    else { this.up.y = Math.min(this.up.y, 0.59); this.up.normalize(); }
     this._leave();
-    this.up.y = keep;
-    this.up.normalize();
+    this.up.copy(keep);
   }
 
   _leave() {
@@ -486,8 +503,12 @@ export class SkatePhysics {
     const target = Math.max(-1, Math.min(1, this.steer * 1.5 + this.spin));
     this._steerSm += (target - this._steerSm) * Math.min(1, dt * 8);
     const d = -this._steerSm * AIR_SPIN_RATE * dt;
-    this.yaw += d;
     this.airSpin += d;
+    // the spin turns the root about ITS OWN up (owner: the air spin looked
+    // laggy and snapped — re-deriving the facing from the heading through a
+    // tilted up swings unevenly); the heading follows the facing
+    _qs.setFromAxisAngle(this.up, d);
+    this.forward.applyQuaternion(_qs);
     // the root KEEPS the tilt it left the surface with (owner: it must not
     // turn upright in the air); only when the landing surface is close does
     // it blend to that surface's normal — a quarter pipe air comes back into
@@ -507,7 +528,7 @@ export class SkatePhysics {
         }
       }
     }
-    this._surfaceForward();
+    this._keepForward();
     // vert-air guide (Skate's lip assist): hold the air a little OUT from the
     // coping plane so the return comes down on the face just below the lip —
     // never inside it onto the deck, never drifting away from the ramp
@@ -573,8 +594,9 @@ export class SkatePhysics {
         this.grounded = true;
         this.groundY = this.pos.y;
         this.surface = hit.object.userData.collider || null;
+        this.surfaceFace = hit.object.userData.faceWorld || null;
         this.vert = null;
-        this._surfaceForward();
+        this._keepForward();
         this.events.push({ type: 'land', airTime: this.airTime });
         return;
       }

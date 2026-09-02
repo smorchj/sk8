@@ -259,7 +259,13 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       // drop old proxies/seals
       for (const c of [...p.children]) if (c.userData.collider === 'proxy') p.remove(c);
       const rec = p.userData.park;
-      if (MODELS[rec.model].qp) p.add(rampProxy(p));
+      if (MODELS[rec.model].qp) {
+        const proxy = rampProxy(p);
+        // the direction OUT of the face (toward whoever rides in): the pop
+        // logic launches vert along it even at the ramp's nearly flat foot
+        proxy.userData.faceWorld = new THREE.Vector3(1, 0, 0).applyQuaternion(p.quaternion);
+        p.add(proxy);
+      }
       for (const s of SEALS[rec.model] || []) {
         const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);
         b.position.set((s.x[0] + s.x[1]) / 2, (s.y[0] + s.y[1]) / 2, (s.z[0] + s.z[1]) / 2);
