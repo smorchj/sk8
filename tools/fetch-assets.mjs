@@ -221,10 +221,14 @@ for (const h of hair) {
 // That happened, and it cost about an hour.)
 const presets = a.presets || [];
 const outfits = a.outfits || [];
+// Garment styles — named material looks (garment-styles/<garment>__<style>.style.bin in the
+// save folder). A project brings ALL of a garment's styles or a chosen few; the game swaps
+// them at runtime on the same outfit geometry.
+const styles = a.styles || [];
 let missingFromFolder = [];
-const found = (presets.length || outfits.length) ? await findSaveFolder() : { dir: null, how: 'not needed' };
+const found = (presets.length || outfits.length || styles.length) ? await findSaveFolder() : { dir: null, how: 'not needed' };
 const folder = found.dir;
-if ((presets.length || outfits.length) && !folder) {
+if ((presets.length || outfits.length || styles.length) && !folder) {
   // A HARD STOP, not a note. This used to print a suggestion and exit 0, so a build that
   // fetched no characters at all reported SUCCESS: the manifest came out with an empty
   // `presets`, the game booted with a body slider and nothing to blend, and the only clue
@@ -307,6 +311,21 @@ if ((presets.length || outfits.length) && !folder) {
     if (!got) { console.log(`  MISS   outfits/${stem}.glb (not in ${folder})`); missingFromFolder.push('outfit ' + stem); continue; }
     total += n;
     console.log(`  copied outfits/${stem}  (${(n / 1e6).toFixed(1)} MB)`);
+  }
+
+  for (const stem of styles) {
+    const src = join(folder, 'garment-styles', stem + '.style.bin');
+    if (!(await stat(src).catch(() => null))?.isFile()) {
+      console.log(`  MISS   garment-styles/${stem}.style.bin (not in ${folder})`);
+      missingFromFolder.push('garment style ' + stem);
+      continue;
+    }
+    const dst = join(out, 'garment-styles', stem + '.style.bin');
+    await mkdir(dirname(dst), { recursive: true });
+    await copyFile(src, dst);
+    const n = (await stat(dst)).size;
+    total += n;
+    console.log(`  copied garment-styles/${stem}  (${(n / 1e6).toFixed(1)} MB)`);
   }
 }
 
@@ -393,6 +412,11 @@ const manifest = {
   face: { url: `bases/${bases[0]}.face.json` },
   hair: {},
   outfits: {},
+  // Garment styles: named material looks per garment — `garment-styles/*.style.bin`,
+  // readable with the record codec shipped beside the SDK (record-codec.js,
+  // deserializeCharacter). Each record carries `baked`: per-material PNG blobs +
+  // factors to assign; geometry is untouched, so a crowd swaps looks for free.
+  styles: {},
   eyes: { index: 'eyes/eyes.json' },
 };
 for (const h of hair) {
@@ -463,6 +487,17 @@ for (const h of hair) {
     }
   }
 }
+// Garment styles — indexed per garment so a game addresses them as
+// (garment, style) rather than pattern-matching file stems. Only styles whose
+// file actually landed are named; a MISS above already counted the rest.
+for (const stem of styles) {
+  if (!(await stat(join(out, 'garment-styles', stem + '.style.bin')).catch(() => null))?.isFile()) continue;
+  const i = stem.indexOf('__');   // garment ids are single-underscore slugs; the first __ separates garment from style
+  if (i <= 0) { console.log(`  NOTE   garment style "${stem}" has no __ separator — skipped from the manifest`); continue; }
+  const gar = stem.slice(0, i), st = stem.slice(i + 2);
+  (manifest.styles[gar] = manifest.styles[gar] || {})[st] = `garment-styles/${stem}.style.bin`;
+}
+
 // Blend sources: one entry per saved character that has a published recipe. A preset with
 // no recipe is silently unblendable, so say which are missing rather than shipping a project
 // whose "character blending" quietly does nothing.
