@@ -160,6 +160,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   const props = [];
   const edges = [];
   const sealMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+  const panelMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.FrontSide });
 
   function applyVariant(obj, variant) {
     obj.traverse(o => {
@@ -229,17 +230,6 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     const back = rampProfile[rampProfile.length - 1];
     const ga = V(back.x, ground, z0), gb = V(back.x, ground, z1);
     idx.push(a, ga, b, b, ga, gb);                            // back wall
-    for (const [side, z] of [['L', z0], ['R', z1]]) {
-      if (nb[side]) continue;                                 // a neighbour: no panel, one surface
-      const g0 = V(rampProfile[0].x, ground, z);
-      let prev = V(rampProfile[0].x, rampProfile[0].y, z);
-      for (let i = 1; i < rampProfile.length; i++) {
-        const cur = V(rampProfile[i].x, rampProfile[i].y, z);
-        idx.push(g0, prev, cur);
-        prev = cur;
-      }
-      idx.push(g0, prev, V(back.x, ground, z));
-    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
@@ -247,6 +237,38 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     const mesh = new THREE.Mesh(geo, sealMat);
     mesh.userData.collider = 'proxy';
     mesh.name = 'qp collider';
+    // end panels: ONE-SIDED, facing outward — they stop a rider coming at the
+    // ramp's side from the ground, but never hold a rider in from inside
+    // (owner: "driving off the side of the ramp sometimes blocks the rider")
+    const ppos = [], pidx = [];
+    const PV = (x, y, z) => { ppos.push(x, y, z); return ppos.length / 3 - 1; };
+    const tri = (i0, i1, i2, outward) => {
+      // wind so the face normal points outward (along ±Z local)
+      const p = (k) => new THREE.Vector3(ppos[k * 3], ppos[k * 3 + 1], ppos[k * 3 + 2]);
+      const n = new THREE.Vector3().subVectors(p(i1), p(i0)).cross(new THREE.Vector3().subVectors(p(i2), p(i0)));
+      if (n.z * outward < 0) pidx.push(i0, i2, i1); else pidx.push(i0, i1, i2);
+    };
+    for (const [side, z, outward] of [['L', z0, -1], ['R', z1, 1]]) {
+      if (nb[side]) continue;                                 // a neighbour: no panel, one surface
+      const g0 = PV(rampProfile[0].x, ground, z);
+      let prev = PV(rampProfile[0].x, rampProfile[0].y, z);
+      for (let i = 1; i < rampProfile.length; i++) {
+        const cur = PV(rampProfile[i].x, rampProfile[i].y, z);
+        tri(g0, prev, cur, outward);
+        prev = cur;
+      }
+      tri(g0, prev, PV(back.x, ground, z), outward);
+    }
+    if (pidx.length) {
+      const pg = new THREE.BufferGeometry();
+      pg.setAttribute('position', new THREE.Float32BufferAttribute(ppos, 3));
+      pg.setIndex(pidx);
+      pg.computeVertexNormals();
+      const panels = new THREE.Mesh(pg, panelMat);
+      panels.userData.collider = 'proxy';
+      panels.name = 'qp end panels';
+      mesh.add(panels);
+    }
     return mesh;
   }
 

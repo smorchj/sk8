@@ -538,6 +538,14 @@ export class SkatePhysics {
       const want = Math.max(-0.8, Math.min(0.8, (VERT_OUT - outDist) * 2.5));
       const out = vel.dot(this.vert.out);
       vel.addScaledVector(this.vert.out, (want - out) * Math.min(1, dt * VERT_GUIDE));
+      // and a soft leash ALONG the coping toward where the air started, so a
+      // drifting air comes back down on the ramp, not beside it (owner:
+      // landing off the side blocked the rider)
+      _lat.crossVectors(WORLD_UP, this.vert.out).normalize();
+      const latDist = _x.dot(_lat);
+      const wantLat = Math.max(-1.0, Math.min(1.0, -latDist * 1.5));
+      const lat = vel.dot(_lat);
+      vel.addScaledVector(_lat, (wantLat - lat) * Math.min(1, dt * VERT_GUIDE * 0.6));
     }
 
     // coming down onto a rail or a coping = a grind (checked before the
