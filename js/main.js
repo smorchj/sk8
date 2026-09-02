@@ -271,6 +271,8 @@ const input = new Input({
   pushStart: () => anim.pushStart(),
   pushEnd: () => anim.pushEnd(),
   isAirborne: () => !physics.grounded,
+  manualStart: () => anim.manualStart(),
+  manualEnd: () => anim.manualEnd(),
   revert: (d) => anim.revert(d),
   brake: (on) => { physics.braking = on; },
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },
@@ -372,7 +374,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake   M manual\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
 
 function updateHUD() {
   const p = physics;

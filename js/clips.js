@@ -35,6 +35,21 @@ const OVERRIDES = {
   // owner: heelflip capture turns after landing but the board doesn't follow —
   // remove the rider's post-land yaw drift relative to the board
   heelflip: { counterYawAfterLand: true },
+  // owner (2026-09-02): the mocap import bends the wrists wrongly on ALL new
+  // captures — drop the Hand tracks so wrists stay at bind pose
+  // grounded: pop/land are LIFT/SET-DOWN moments, not air — the ground path
+  // must follow the board the whole way (no frozen-air segment)
+  manual: { dropTracks: ['HandL', 'HandR'], grounded: true },
+  // The mocapped revert (owner, 2026-09-02): cruise 10.20→10.75 is a 180
+  // revert that CONTINUES to a 360 by the end — one tap stops at the 180,
+  // a double tap rides the full 360. revertSpin freezes the ground-path yaw
+  // so the spin stays in the data instead of being absorbed by the anchor.
+  revertclip: {
+    subclip: [10.20, 11.43],
+    dropTracks: ['HandL', 'HandR'],
+    revertSpin: true,
+    halfT: 0.55,                      // 180 point, subclip-local
+  },
 };
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -154,12 +169,22 @@ export class Clip {
   _bake(json, skel) {
     const c = json.clip;
     const ov = OVERRIDES[this.name] || {};
-    this.duration = c.duration;
-    this.frames = Math.max(2, Math.round(c.duration * FPS) + 1);
+    // wrist-bend mocap bug (owner): unkey listed bones → they hold bind pose
+    for (const t of ov.dropTracks || []) delete c.tracks[t];
+    this._grounded = !!ov.grounded;
+    this._revertSpin = !!ov.revertSpin;
+    this.halfT = ov.halfT ?? null;
+    this._t0 = ov.subclip ? ov.subclip[0] : 0;
+    const subEnd = ov.subclip ? Math.min(ov.subclip[1], c.duration) : c.duration;
+    this.duration = subEnd - this._t0;
+    this.frames = Math.max(2, Math.round(this.duration * FPS) + 1);
     const N = this.frames;
 
     this.tags = {};
-    for (const [t, tag] of (c.tags || [])) this.tags[tag] = t;
+    for (const [t, tag] of (c.tags || [])) {
+      const lt = t - this._t0;
+      if (lt >= 0 && lt <= this.duration) this.tags[tag] = lt;
+    }
 
     // Broken capture tails (owner, 2026-09-01: kickflip's ending has broken
     // frames): the exporter prunes near-static keys, so a large hips key gap
@@ -181,13 +206,13 @@ export class Clip {
     for (const bn of this.boneNames) {
       const arr = new Float32Array(N * 4);
       for (let i = 0; i < N; i++) {
-        const q = sampleKeys(c.tracks[bn], i / FPS, true);
+        const q = sampleKeys(c.tracks[bn], this._t0 + i / FPS, true);
         arr.set(q, i * 4);
       }
       bones.set(bn, arr);
     }
     const hipsW = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) hipsW.set(sampleKeys(c.hips, i / FPS, false), i * 3);
+    for (let i = 0; i < N; i++) hipsW.set(sampleKeys(c.hips, this._t0 + i / FPS, false), i * 3);
 
     const bt = c.props && c.props.skateboard;
     let boardPosW = null, boardQuatW = null;
@@ -197,8 +222,8 @@ export class Clip {
       const posKeys = bt.map(k => [k[0], k[1], k[2], k[3]]);
       const quatKeys = bt.map(k => [k[0], k[4], k[5], k[6], k[7]]);
       for (let i = 0; i < N; i++) {
-        boardPosW.set(sampleKeys(posKeys, i / FPS, false), i * 3);
-        boardQuatW.set(sampleKeys(quatKeys, i / FPS, true), i * 4);
+        boardPosW.set(sampleKeys(posKeys, this._t0 + i / FPS, false), i * 3);
+        boardQuatW.set(sampleKeys(quatKeys, this._t0 + i / FPS, true), i * 4);
       }
     }
     const boardless = !boardPosW;
@@ -345,8 +370,10 @@ export class Clip {
       const riseMinus = endY(i1, -1) - endY(i0, -1);
       return risePlus >= riseMinus ? +1 : -1;
     }
-    // no pop: nose = net travel direction of the board
-    _v.set(bPos[(N - 1) * 3] - bPos[0], 0, bPos[(N - 1) * 3 + 2] - bPos[2]);
+    // no pop: nose = net travel direction of the board (revert-spin clips use
+    // only the EARLY pre-spin travel — the rest is rotation)
+    const NE = this._revertSpin ? Math.min(N - 1, 8) : (N - 1);
+    _v.set(bPos[NE * 3] - bPos[0], 0, bPos[NE * 3 + 2] - bPos[2]);
     if (_v.lengthSq() < 1e-4) return +1;
     let dot = 0;
     for (let i = 0; i < N; i += 5) {
@@ -456,8 +483,17 @@ export class Clip {
       raw[i * 3 + 1] = bPos[i * 3 + 2];
       raw[i * 3 + 2] = yaw;
     }
+    if (this._revertSpin) {
+      const g0 = new Float32Array(N * 3);
+      for (let i = 0; i < N; i++) {
+        g0[i * 3] = raw[i * 3];
+        g0[i * 3 + 1] = raw[i * 3 + 1];
+        g0[i * 3 + 2] = raw[2];          // yaw frozen at the pre-spin heading
+      }
+      return g0;
+    }
     const g = new Float32Array(N * 3);
-    const pop = this.tags.pop != null ? Math.round(this.tags.pop * FPS) : null;
+    const pop = (this.tags.pop != null && !this._grounded) ? Math.round(this.tags.pop * FPS) : null;
     const land = this.tags.land != null ? Math.round(this.tags.land * FPS) : null;
     for (let i = 0; i < N; i++) {
       if (pop == null || i <= pop) {
@@ -627,6 +663,8 @@ export async function loadClips(skel, onProgress) {
     impossible: 'Impossible_V2.json',
     push: 'Push_Composed.json',        // the owner's full multi-stroke push
     cruise: 'Cruise_slalom_revert.json',
+    manual: 'Manual_V1.json',          // recovered from the recycle bin (2026-09-02)
+    revertclip: 'Cruise_slalom_revert.json',   // subclipped to the mocapped revert
   };
   const clips = {};
   for (const [key, file] of Object.entries(files)) {

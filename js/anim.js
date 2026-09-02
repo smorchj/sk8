@@ -114,10 +114,48 @@ export class SkateAnim {
 
   push() { this.pushStroke(); }   // compat alias
 
+  // Manual (recovered Manual_V1): grounded balance — hold to stay up on the
+  // tail, release to set down. pop/land tags are lift/set-down moments.
+  manualStart() {
+    if (!this.phys.grounded) return;
+    if (!['ride', 'push', 'landing', 'windup'].includes(this.state)) return;
+    this._manualOut = false;
+    this._toState('manual');
+    this.lastTrick = 'Manual';
+    this.onTrick?.('Manual');
+  }
+
+  manualEnd() {
+    if (this.state !== 'manual' || this._manualOut) return;
+    this._manualOut = true;
+    const land = this.clips.manual.tags.land;
+    if (this.time < land) {
+      blendBuffers(this._snap, this.out, this.out, 0);
+      this._fadeFrom = this._snap;
+      this._fadeT = 0;
+      this._fadeDur = 0.12;
+      this.time = land;                 // straight to the set-down
+    }
+  }
+
+  // The MOCAPPED revert (cruise 10.20→11.43): one tap spins the authored 180
+  // and stops; a second tap before the 180 point rides the full 360 to the
+  // clip's end. Q/E (dir) pick the spin side via mirroring — both fs and bs
+  // are covered by the one capture.
   revert(dir) {
     if (!this.phys.grounded) return;
+    const clip = this.clips.revertclip;
+    if (this.state === 'revert') {
+      if (this._rev && this.time < (clip.halfT ?? 0.55) + 0.12) this._rev.want360 = true;
+      return;
+    }
     if (this.state !== 'ride' && this.state !== 'landing') return;
-    this.phys.startRevert(dir);
+    if (!clip) { this.phys.startRevert(dir); return; }
+    const stanceMirror = clip.stance !== this.stance;
+    this._rev = { mirror: stanceMirror !== (dir < 0), want360: false };
+    this._toState('revert');
+    this.lastTrick = 'Revert';
+    this.onTrick?.('Revert');
   }
 
   _mapGesture(type) {
@@ -266,6 +304,43 @@ export class SkateAnim {
       }
       this._leanLayer(pose, steer);
       if (this.time >= clip.duration - 0.05) { phys.pushing = false; this._toState('ride'); }
+    } else if (this.state === 'revert') {
+      const clip = this.clips.revertclip;
+      this.time += dt;
+      const half = clip.halfT ?? 0.55;
+      let exit = null;
+      if (!this._rev.want360 && this.time >= half) exit = 'half';
+      else if (this.time >= clip.duration - 0.034) exit = 'full';
+      clip.sample(Math.min(this.time, clip.duration - 0.034), this._rev.mirror, pose);
+      phys.vel.x *= 1 - 0.3 * dt;        // the skid scrubs a little speed
+      phys.vel.z *= 1 - 0.3 * dt;
+      phys.pushing = false;
+      if (exit && pose.board) {
+        // fold the spun board frame into the physics root (world-invisible),
+        // flip rollSign on the 180; the 360 comes back around to itself
+        const b = pose.board;
+        _v.set(0, 0, 1).applyQuaternion(_q.fromArray(b.quat));
+        const f = { x: b.pos[0], z: b.pos[2], yaw: Math.atan2(_v.x, _v.z) };
+        const cy = Math.cos(phys.yaw), sy = Math.sin(phys.yaw);
+        phys.pos.x += cy * f.x + sy * f.z;
+        phys.pos.z += -sy * f.x + cy * f.z;
+        phys.yaw += f.yaw;
+        if (exit === 'half') phys.rollSign = -phys.rollSign;
+        else { this.lastTrick = 'Revert 360'; this.onTrick?.(this.lastTrick); }
+        this._retarget(this.out, f);
+        this._retarget(pose, f);
+        this._toState('ride');
+      }
+    } else if (this.state === 'manual') {
+      const clip = this.clips.manual;
+      const mirror = clip.stance !== this.stance;
+      this.time += dt;
+      const A = 0.95, B = 1.80;         // balance loop inside [pop..land]
+      if (!this._manualOut && this.time >= B) this.time = A + (this.time - B);
+      clip.sample(Math.min(this.time, clip.duration - 0.034), mirror, pose);
+      this._leanLayer(pose, steer * 0.5);
+      phys.pushing = false;
+      if (this.time >= clip.duration - 0.05) this._toState('ride');
     } else if (this.state === 'trick') {
       const tr = this.trick;
       tr.t += dt * tr.rate;
@@ -532,7 +607,7 @@ export class SkateAnim {
   groundFeetIK(rig, boardNode, soleData) {
     if (!soleData) return;
     let feet = null;
-    if (this.state === 'ride' || this.state === 'windup') feet = ['L', 'R'];
+    if (['ride','windup','manual','revert'].includes(this.state)) feet = ['L', 'R'];
     else if (this.state === 'push') {
       const info = this.clips.push.pushInfo;
       const mirror = this.clips.push.stance !== this.stance;
@@ -622,7 +697,7 @@ export class SkateAnim {
     // freshly-applied raw pose before measuring
     playerRoot.updateMatrixWorld(true);
     let feet = null;
-    if (this.state === 'ride' || this.state === 'windup' || this.state === 'landing') {
+    if (['ride','windup','landing','manual','revert'].includes(this.state)) {
       feet = ['L', 'R'];
     } else if (this.state === 'push') {
       const info = this.clips.push.pushInfo;

@@ -92,6 +92,16 @@ export class Input {
       this._trickPtr.samples.push({ t: performance.now(), x: e.clientX, y: e.clientY });
       if (this._trickPtr.samples.length > 400) this._trickPtr.samples.shift();
       this._fade = 1;
+      // MANUAL: pull BACK (down) on the pad and HOLD — a quick down-flick is
+      // still a cancel; only a sustained pull becomes a manual
+      const p0 = this._trickPtr.samples[0];
+      const dy = e.clientY - p0.y, dx = e.clientX - p0.x;
+      if (!this._manualOn && !this._manualTimer && dy > 55 && dy > Math.abs(dx)) {
+        this._manualTimer = setTimeout(() => {
+          this._manualTimer = null;
+          if (this._trickPtr) { this._manualOn = true; this.cb.manualStart?.(); }
+        }, 180);
+      }
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
       const p = this._steerPtr;
       const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
@@ -123,6 +133,12 @@ export class Input {
       const samples = this._trickPtr.samples;
       this._trickPtr = null;
       this.holdingTrick = false;
+      if (this._manualTimer) { clearTimeout(this._manualTimer); this._manualTimer = null; }
+      if (this._manualOn) {                       // release ends the manual
+        this._manualOn = false;
+        this.cb.manualEnd?.();
+        return;
+      }
       this.cb.windupEnd?.(cancelled ? { type: 'cancel' } : this._classify(samples));
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
       this._steerPtr = null;
@@ -190,6 +206,9 @@ export class Input {
       e.preventDefault();
       if (down) { this.holdingTrick = true; this.cb.windupStart?.(); }
       else { this.holdingTrick = false; this.cb.windupEnd?.({ type: 'ollie', strength: 1 }); }
+    }
+    if (k === 'm') {
+      if (down) this.cb.manualStart?.(); else this.cb.manualEnd?.();
     }
     if (k === 'w') {
       if (down) this.cb.pushStart?.(); else this.cb.pushEnd?.();
