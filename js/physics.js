@@ -228,7 +228,10 @@ export class SkatePhysics {
         hit = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, PROBE_UP), DOWN, PROBE_UP + PROBE_DOWN);
         if (hit && hit.normal.y < 0.3) hit = null;
       }
-      if ((hit && hit.backface) || this.world.inside(_o.copy(this.pos).addScaledVector(WORLD_UP, 0.04))) {
+      // (the inside test starts a hair out along the SURFACE normal — straight
+      // up from a contact point on a steep face pokes into the ramp itself
+      // and used to fire a bogus escape onto the deck)
+      if ((hit && hit.backface) || this.world.inside(_o.copy(this.pos).addScaledVector(up, 0.04))) {
         // INSIDE a mesh (owner: "stuck inside the quarter pipe") — get back
         // onto the top surface straight above and stop
         hit = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, 6), DOWN, 12);
@@ -336,10 +339,11 @@ export class SkatePhysics {
       _o.copy(this.pos).addScaledVector(WORLD_UP, 0.06);
       _d.copy(vel).normalize();
       const hit = this.world.cast(_o, _d, step + 0.06);
-      // rideable landing: a face you could stand on — or, in a vert air, the
-      // transition you came from. Anything steeper is a wall: slide along it
-      // and keep falling (the root never "lands" lying on a wall)
-      const rideable = hit && (hit.normal.y > (this.vert ? 0.05 : 0.5));
+      // rideable landing: anything up to ~80° — a transition's face is a
+      // landing whether you came out of it or dropped into it. A wall
+      // (steeper) is slid along while still falling (the root never "lands"
+      // lying on a wall)
+      const rideable = hit && (hit.normal.y > (this.vert ? 0.05 : 0.17));
       if (hit && vel.dot(hit.normal) < 0 && !rideable) {
         vel.addScaledVector(hit.normal, -vel.dot(hit.normal) * 1.02);
         this.pos.copy(hit.point).addScaledVector(hit.normal, 0.03).addScaledVector(WORLD_UP, -0.06);
