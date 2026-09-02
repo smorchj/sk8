@@ -31,8 +31,10 @@ const LAYOUT = [
   ['ramp', 19.5, 12, 180, 2.6, 2],
   // the halfpipe on the upper grass (owner: it was far too small)
   ['ramp2', 32, 8, 90, 6.0],
-  // street level: the concrete hip, the rail, the curve bridge
-  ['ramp_haven', 0, -27, 0, 4.0],
+  // street level: the concrete hip (banks on its sides, a ledge in front,
+  // sunk so the banks start at ground level — owner: 'hard to get on'), the
+  // rail, the curve bridge
+  ['ramp_haven', 0, -27, 0, 5.0, null, 0.28],
   ['grind_rail', 7, -14, 0, 1.4],            // 2.7 m long, 0.44 m high
   ['curve_bridge', -9, -21, 0, 3.0],
   // the picnic table on the upper grass
@@ -107,7 +109,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   const box = new THREE.Box3();
   const props = [];
   const footprints = [];
-  for (const [name, x, z, rotDeg, scale, variant] of LAYOUT) {
+  for (const [name, x, z, rotDeg, scale, variant, sink = 0] of LAYOUT) {
     const obj = base[name].clone();
     obj.traverse(o => {
       if (!o.isMesh) return;
@@ -121,8 +123,8 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     obj.scale.setScalar(scale);
     obj.rotation.y = THREE.MathUtils.degToRad(rotDeg);
     obj.updateMatrixWorld(true);
-    box.setFromObject(obj);                     // sit on the terrain
-    obj.position.set(x, heightAt(x, z) - box.min.y - 0.01, z);
+    box.setFromObject(obj);                     // sit on the terrain (minus any sink)
+    obj.position.set(x, heightAt(x, z) - box.min.y - 0.01 - sink, z);
     obj.updateMatrixWorld(true);
     box.setFromObject(obj);
     footprints.push({ x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2, hw: (box.max.x - box.min.x) / 2, hd: (box.max.z - box.min.z) / 2 });
@@ -157,8 +159,14 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   // ── grindable edges: rail tops, as world segments ────────────────────────
   // (local endpoints measured on the model). Copings are deliberately NOT
   // grindable (owner, 2026-09-02): lip tricks will come from animation.
+  // The concrete hip's ledges (height-probed, 2026-09-02): the front ledge
+  // and the plateau's front edge, both grindable.
   const EDGES = {
     grind_rail: [[[-0.86, 0.154, 0], [0.86, 0.154, 0], 'rail']],
+    ramp_haven: [
+      [[-0.55, -0.06, 0.41], [0.55, -0.06, 0.41], 'ledge'],    // front ledge, 0.64 m high in the park
+      [[-0.3, 0.10, 0.17], [0.3, 0.10, 0.17], 'ledge'],        // the plateau's front edge, 1.43 m
+    ],
   };
   const edges = [];
   for (const p of props) {
@@ -167,7 +175,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       const b = p.localToWorld(new THREE.Vector3(...lb));
       const dir = b.clone().sub(a);
       const len = dir.length();
-      edges.push({ a, b, dir: dir.multiplyScalar(1 / len), len, kind, name: `${p.userData.park.name} ${kind}` });
+      edges.push({ a, b, dir: dir.multiplyScalar(1 / len), len, kind, name: `${p.userData.park.name} ${kind}`, prop: p });
     }
   }
 

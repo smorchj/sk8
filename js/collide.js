@@ -13,9 +13,23 @@ const _m3 = new THREE.Matrix3();
 export class CollisionWorld {
   constructor() {
     this.meshes = [];
+    this.active = this.meshes;                   // meshes minus the ignored prop
+    this.ignored = null;
     this.ray = new THREE.Raycaster();
     this.ray.firstHitOnly = true;
     this._hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, object: null };
+  }
+
+  // temporarily leave one prop (and everything under it) out of the casts —
+  // e.g. the rail you just dropped off, so the first sweeps can't start
+  // inside its bar
+  setIgnored(root) {
+    if (root === this.ignored) return;
+    this.ignored = root;
+    if (!root) { this.active = this.meshes; return; }
+    const under = new Set();
+    root.traverse(o => under.add(o));
+    this.active = this.meshes.filter(m => !under.has(m));
   }
 
   // register every mesh under `root` (world matrices must be final)
@@ -27,6 +41,7 @@ export class CollisionWorld {
       o.userData.collider = tag;
       this.meshes.push(o);
     });
+    if (!this.ignored) this.active = this.meshes;
   }
 
   // nearest surface along a ray; the normal is flipped to face the ray
@@ -35,7 +50,7 @@ export class CollisionWorld {
     this.ray.set(origin, dir);
     this.ray.far = far;
     this.ray.near = 0;
-    const hits = this.ray.intersectObjects(this.meshes, false);
+    const hits = this.ray.intersectObjects(this.active, false);
     if (!hits.length) return null;
     const h = hits[0];
     const out = this._hit;
