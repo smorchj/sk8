@@ -75,7 +75,7 @@ export class SkateAnim {
 
   windupStart() {
     if (!this.phys.grounded) return;
-    if (this.state === 'ride' || this.state === 'push' || this.state === 'landing') {
+    if (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'grind') {
       this._toState('windup');
       this.holding = true;
     }
@@ -271,8 +271,18 @@ export class SkateAnim {
       // left the ground without a trick (a lip, a ledge, the stairs): hold a
       // compact air pose — the ollie clip just before its catch — so the
       // landing machinery (plant, fold-in) works exactly like a trick's
-      if (e.type === 'leave' && (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'windup')) {
+      if (e.type === 'leave' && (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'windup' || this.state === 'grind')) {
         this._startAir();
+        continue;
+      }
+      // the board caught a rail/coping: 50-50 or boardslide, a procedural
+      // balance pose (owner: arms out, no capture needed)
+      if (e.type === 'grind') {
+        this.grindKind = e.kind;
+        this._toState('grind');
+        this._fadeDur = 0.10;
+        this.lastTrick = e.kind === '5050' ? '50-50' : 'Boardslide';
+        this.onTrick?.(this.lastTrick);
         continue;
       }
       if (e.type === 'land' && this.state === 'trick') {
@@ -391,6 +401,11 @@ export class SkateAnim {
         this._retarget(pose, f);
         this._toState('ride');
       }
+    } else if (this.state === 'grind') {
+      this._ridePose(pose, 0);
+      this._grindLayer(pose, dt);
+      phys.pushing = false;
+      if (!phys.grind) this._toState('ride');       // (the physics ended it without a leave)
     } else if (this.state === 'manual') {
       const clip = this.clips.manual;
       const mirror = clip.stance !== this.stance;
@@ -762,7 +777,7 @@ export class SkateAnim {
   groundFeetIK(rig, boardNode, soleData) {
     if (!soleData) return;
     let feet = null;
-    if (['ride','windup','manual','revert'].includes(this.state)) feet = ['L', 'R'];
+    if (['ride','windup','manual','revert','grind'].includes(this.state)) feet = ['L', 'R'];
     else if (this.state === 'push') {
       const info = this.clips.push.pushInfo;
       const mirror = this.clips.push.stance !== this.stance;
@@ -812,6 +827,39 @@ export class SkateAnim {
     addRot(pose, 'Spine_03', 'x', Math.sin(this._t * 1.7) * 0.015);
     this._leanLayer(pose, steer);
     if (pose.hipsPos) pose.hipsPos[1] += Math.sin(this._t * 2.3) * 0.004;
+    // debug: try a rotation on a bone from the console (SK8.anim.boneTest = {bone, axis, angle})
+    if (this.boneTest) addRot(pose, this.boneTest.bone, this.boneTest.axis, this.boneTest.angle);
+  }
+
+  // grind balance (owner, 2026-09-02: "arms out balancing type animations,
+  // easily done through code"): knees bent, arms out wide, a slow wobble;
+  // a boardslide twists the torso toward the direction of travel (the board
+  // is across the rail, the rider still looks where they're going)
+  _grindLayer(pose, dt) {
+    this._grindT = (this._grindT || 0) + dt;
+    const c = 0.35;
+    const before = this._feetY(pose);
+    this._crouchLayer(pose, c);
+    if (before != null && pose.hipsPos) {
+      const after = this._feetY(pose);
+      if (after != null) pose.hipsPos[1] -= (after - before);
+    }
+    // arms out to the sides: on this rig UpperArm 'z' abducts (measured:
+    // L negative, R positive; 1.3 rad ≈ horizontal)
+    const wob = Math.sin(this._grindT * 2.6) * 0.06;
+    addRot(pose, 'UpperArmL', 'z', -1.25 + wob);
+    addRot(pose, 'UpperArmR', 'z', 1.25 + wob);
+    addRot(pose, 'UpperArmL', 'x', 0.2);
+    addRot(pose, 'UpperArmR', 'x', 0.2);
+    addRot(pose, 'Spine_01', 'z', wob * 0.5);
+    if (this.grindKind === 'boardslide') {
+      // travel in root space is ±X (the board is across the edge)
+      const n = this.phys.noseDir(_v);
+      const side = Math.sign(this.phys.vel.x * n.z - this.phys.vel.z * n.x) || 1;
+      addRot(pose, 'Spine_01', 'y', side * 0.35);
+      addRot(pose, 'Spine_03', 'y', side * 0.3);
+      addRot(pose, 'Head', 'y', side * 0.25);
+    }
   }
 
   _leanLayer(pose, steer) {
@@ -852,7 +900,7 @@ export class SkateAnim {
     // freshly-applied raw pose before measuring
     playerRoot.updateMatrixWorld(true);
     let feet = null;
-    if (['ride','windup','landing','manual','revert'].includes(this.state)) {
+    if (['ride','windup','landing','manual','revert','grind'].includes(this.state)) {
       feet = ['L', 'R'];
     } else if (this.state === 'push') {
       const info = this.clips.push.pushInfo;

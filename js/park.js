@@ -33,7 +33,7 @@ const LAYOUT = [
   ['ramp2', 32, 8, 90, 6.0],
   // street level: the concrete hip, the rail, the curve bridge
   ['ramp_haven', 0, -27, 0, 4.0],
-  ['grind_rail', 7, -14, 0, 1.8],
+  ['grind_rail', 7, -14, 0, 1.4],            // 2.7 m long, 0.44 m high
   ['curve_bridge', -9, -21, 0, 3.0],
   // the picnic table on the upper grass
   ['picnic_table', -27, 10, 30, 1.0],
@@ -154,6 +154,23 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   world.add(stairs, 'stairs');
   for (const p of props) world.add(p, p.userData.park.name);
 
+  // ── grindable edges: rail tops, as world segments ────────────────────────
+  // (local endpoints measured on the model). Copings are deliberately NOT
+  // grindable (owner, 2026-09-02): lip tricks will come from animation.
+  const EDGES = {
+    grind_rail: [[[-0.86, 0.154, 0], [0.86, 0.154, 0], 'rail']],
+  };
+  const edges = [];
+  for (const p of props) {
+    for (const [la, lb, kind] of EDGES[p.userData.park.name] || []) {
+      const a = p.localToWorld(new THREE.Vector3(...la));
+      const b = p.localToWorld(new THREE.Vector3(...lb));
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      edges.push({ a, b, dir: dir.multiplyScalar(1 / len), len, kind, name: `${p.userData.park.name} ${kind}` });
+    }
+  }
+
   // ── grass cards on the meadow ─────────────────────────────────────────────
   onProgress?.('park: grass');
   const exclude = (x, z) =>
@@ -162,5 +179,5 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   const grass = await buildGrass({ renderer, exclude, heightAt, radius: 95 });
   group.add(grass.group);
 
-  return { group, props, base, world, terrain, update: (dt) => grass.update(dt) };
+  return { group, props, base, world, terrain, edges, update: (dt) => grass.update(dt) };
 }

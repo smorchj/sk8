@@ -244,6 +244,7 @@ try {
 // the rider starts on the street slab, rolling toward the stairs and the pad
 const START = { x: 0, z: -16, yaw: 0 };
 const physics = new SkatePhysics(park.world);
+physics.setEdges(park.edges);
 physics.pos.set(START.x, 0, START.z);
 physics.vel.set(0, 0, 2.0);
 const _rootQ = new THREE.Quaternion();

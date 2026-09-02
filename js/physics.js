@@ -46,6 +46,10 @@ const VERT_OUT = 0.22;         // m — where a vert air hangs, out from the cop
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
 const PIVOT = 0.35;            // fraction of the steer rate available at a standstill (kick-turn)
 const POP_GRACE = 0.14;        // s after leaving a surface in which a pop still counts
+const GRIND_SNAP = 0.28;       // m — how close (horizontally) the board must come down to an edge
+const GRIND_DRAG = 1.1;        // m/s² — grinding scrubs speed
+const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall off
+const GRIND_LIFT = { '5050': 0.055, boardslide: 0.125 };   // root below the edge: trucks / deck on it
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -74,6 +78,8 @@ export class SkatePhysics {
     this.groundY = 0;                        // height of the surface under the board
     this.surface = null;                     // collider tag under the board
     this.vert = null;                        // {out, lip} while in a vert air off a transition
+    this.edges = [];                         // grindable segments {a, b, dir, len, kind, name}
+    this.grind = null;                       // {edge, t, s, v, kind} while grinding
 
     // revert = quick grounded 180 of board+body, flips rollSign at the end
     this.revert = null;                      // {t, dur, dir, from}
@@ -110,6 +116,15 @@ export class SkatePhysics {
   // straight up and the ride-up momentum carries the air — popping along the
   // surface normal threw the rider away from the quarter pipe
   pop(vy) {
+    if (this.grind) {                        // ollie out of a grind
+      this._endGrind('pop');
+      this.grounded = false;
+      this.vel.y += vy;
+      this.airTime = 0;
+      this.airSpin = 0;
+      this.events.push({ type: 'leave' });
+      return;
+    }
     // a pop a few frames after the lip/ledge still counts (POP_GRACE): an
     // ollie AT the coping is the move, and the clip's pop tag lands late
     if (!this.grounded && this.airTime > POP_GRACE) return;
@@ -129,8 +144,101 @@ export class SkatePhysics {
     const n = Math.min(12, Math.max(1, Math.ceil(dt / SUBSTEP)));
     const h = dt / n;
     for (let i = 0; i < n; i++) {
-      if (this.grounded) this._stepGround(h); else this._stepAir(h);
+      if (this.grind) this._stepGrind(h);
+      else if (this.grounded) this._stepGround(h);
+      else this._stepAir(h);
     }
+  }
+
+  // ── grinds ────────────────────────────────────────────────────────────────
+  // Grindable edges (rails, copings) are world segments from the park. The
+  // Skate way: no input starts a grind — the board catches an edge when it
+  // comes DOWN onto it; the board's angle at contact decides 50-50 (along
+  // the edge) vs boardslide (across it). Ollie out any time; the edge's end
+  // or a stall drops you off.
+  setEdges(edges) { this.edges = edges || []; }
+
+  _findEdge() {
+    let best = null, bestD = GRIND_SNAP;
+    for (const e of this.edges) {
+      _x.subVectors(this.pos, e.a);
+      const t = Math.min(e.len, Math.max(0, _x.dot(e.dir)));
+      _o.copy(e.a).addScaledVector(e.dir, t);           // nearest point on the edge
+      const dh = this.pos.y - _o.y;
+      if (dh < -0.08 || dh > 0.34) continue;             // board must be at/above the edge
+      const d = Math.hypot(this.pos.x - _o.x, this.pos.z - _o.z);
+      if (d < bestD) { bestD = d; best = { edge: e, t }; }
+    }
+    return best;
+  }
+
+  _startGrind(edge, t) {
+    const dir = edge.dir;
+    const nose = this.noseDir(_n);
+    const c = nose.x * dir.x + nose.z * dir.z;           // nose along the edge?
+    const kind = Math.abs(c) > 0.6 ? '5050' : 'boardslide';
+    const along = this.vel.x * dir.x + this.vel.z * dir.z;
+    const s = along >= 0 ? 1 : -1;
+    const edgeYaw = Math.atan2(dir.x, dir.z);
+    let yaw;
+    if (kind === '5050') {
+      yaw = c >= 0 ? edgeYaw : edgeYaw + Math.PI;
+      this.rollSign = (c >= 0 ? 1 : -1) * s;
+    } else {
+      const y1 = edgeYaw + Math.PI / 2, y2 = edgeYaw - Math.PI / 2;
+      const d1 = Math.sin(y1) * nose.x + Math.cos(y1) * nose.z;
+      const d2 = Math.sin(y2) * nose.x + Math.cos(y2) * nose.z;
+      yaw = d1 >= d2 ? y1 : y2;
+    }
+    // keep the yaw continuous with where we came from (spins count from here)
+    while (yaw - this.yaw > Math.PI) yaw -= 2 * Math.PI;
+    while (yaw - this.yaw < -Math.PI) yaw += 2 * Math.PI;
+    this.yaw = yaw;
+    this.grind = { edge, t, s, v: Math.max(Math.abs(along), GRIND_MIN_V), kind };
+    this.grounded = true;
+    this.vert = null;
+    this.up.set(0, 1, 0);
+    this._surfaceForward();
+    this._placeOnEdge();
+    this.events.push({ type: 'grind', kind, name: edge.name, airTime: this.airTime });
+  }
+
+  _placeOnEdge() {
+    const g = this.grind;
+    this.pos.copy(g.edge.a).addScaledVector(g.edge.dir, g.t);
+    this.pos.y -= GRIND_LIFT[g.kind];                    // trucks / deck on the edge, not the wheels
+    this.vel.copy(g.edge.dir).multiplyScalar(g.s * g.v);
+    this.groundY = this.pos.y;
+    this.surface = g.edge.name;
+  }
+
+  _endGrind(reason) {
+    const g = this.grind;
+    if (!g) return;
+    this.grind = null;
+    this.vel.copy(g.edge.dir).multiplyScalar(g.s * g.v);
+    this.events.push({ type: 'grindEnd', kind: g.kind, reason });
+  }
+
+  _stepGrind(dt) {
+    const g = this.grind, dir = g.edge.dir;
+    g.v += -G * dir.y * g.s * dt;                        // an inclined rail speeds/slows you
+    g.v -= GRIND_DRAG * dt;
+    if (g.v < GRIND_MIN_V * 0.5) {                       // stalled: drop off
+      this._endGrind('stall');
+      this._leave();
+      return;
+    }
+    g.t += g.s * g.v * dt;
+    if (g.t < 0 || g.t > g.edge.len) {                   // off the end
+      g.t = Math.min(g.edge.len, Math.max(0, g.t));
+      this._placeOnEdge();
+      this._endGrind('end');
+      this._leave();
+      return;
+    }
+    this._placeOnEdge();
+    this._surfaceForward();
   }
 
   _surfaceForward() {
@@ -331,6 +439,13 @@ export class SkatePhysics {
       const want = Math.max(-0.8, Math.min(0.8, (VERT_OUT - outDist) * 2.5));
       const out = vel.dot(this.vert.out);
       vel.addScaledVector(this.vert.out, (want - out) * Math.min(1, dt * VERT_GUIDE));
+    }
+
+    // coming down onto a rail or a coping = a grind (checked before the
+    // landing sweep: the edge is above whatever is under it)
+    if (this.edges.length && !this.vert && vel.y < 0.5 && this.airTime > 0.04) {
+      const e = this._findEdge();
+      if (e) { this._startGrind(e.edge, e.t); return; }
     }
 
     const step = vel.length() * dt;
