@@ -50,8 +50,25 @@ export const DEFAULT_LAYOUT = [
 // grindable edges per model, in the model's local space (probed on the
 // meshes). Copings are deliberately NOT here (owner: lip tricks come from
 // animation).
+// a polyline (curved tops) → consecutive ledge segments; grinds hand off
+const poly = (pts) => pts.slice(1).map((p, i) => [pts[i], p, 'ledge']);
 const EDGES = {
   grind_rail: [[[-0.86, 0.154, 0], [0.86, 0.154, 0], 'rail']],
+  // the picnic table (owner: "two types of benches, none grindable"): both
+  // bench seats' outer edges (0.36 m up) and both long edges of the table
+  // top (0.64 m up) — probed 2026-09-02
+  picnic_table: [
+    [[-0.92, 0.0, -0.65], [0.92, 0.0, -0.65], 'ledge'],
+    [[-0.92, 0.0, 0.65], [0.92, 0.0, 0.65], 'ledge'],
+    [[-0.92, 0.28, -0.32], [0.92, 0.28, -0.32], 'ledge'],
+    [[-0.92, 0.28, 0.32], [0.92, 0.28, 0.32], 'ledge'],
+  ],
+  // the curved bridge/bench: its top ridge (0.72 m up), traced as a polyline
+  curve_bridge: poly([
+    [-0.88, 0.12, -0.72], [-0.5, 0.12, -0.62], [-0.2, 0.12, -0.48], [0.05, 0.12, -0.32],
+    [0.22, 0.12, -0.15], [0.35, 0.12, 0.0], [0.45, 0.12, 0.15], [0.55, 0.12, 0.35],
+    [0.65, 0.12, 0.55], [0.75, 0.12, 0.8],
+  ]),
   ramp_haven: [
     [[-0.55, -0.06, 0.41], [0.55, -0.06, 0.41], 'ledge'],    // front ledge
     [[-0.3, 0.10, 0.17], [0.3, 0.10, 0.17], 'ledge'],        // the plateau's front edge

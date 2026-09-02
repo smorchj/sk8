@@ -394,11 +394,17 @@ export class SkatePhysics {
       _o.copy(this.pos).addScaledVector(up, PROBE_UP);
       _d.copy(up).negate();
       let hit = this.world.cast(_o, _d, PROBE_UP + PROBE_DOWN);
-      if (hit && !hit.backface && hit.normal.dot(up) < 0.45) {
+      // only transition colliders (ramps, halfpipe) and the hip's banks may
+      // tilt the rider steeply; on a bench, a rail, a table the ground is a
+      // near-level top — never a slat's side or a bevel (owner: the rider
+      // ended up lying on the curved bench)
+      const steepOK = hit && /^ramp/.test(hit.object.userData.collider || '');
+      const minY = steepOK ? -1 : 0.5;
+      if (hit && !hit.backface && (hit.normal.dot(up) < 0.45 || hit.normal.y < minY)) {
         // the probe found a face far from our current tilt (a wall next to a
         // bank, a step's riser): that is not the ground — look straight down
         hit = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, PROBE_UP), DOWN, PROBE_UP + PROBE_DOWN);
-        if (hit && hit.normal.y < 0.3) hit = null;
+        if (hit && hit.normal.y < Math.max(0.3, minY)) hit = null;
       }
       // (the inside test starts a hair out along the SURFACE normal — straight
       // up from a contact point on a steep face pokes into the ramp itself
@@ -519,7 +525,8 @@ export class SkatePhysics {
         _o.copy(this.pos).addScaledVector(WORLD_UP, 0.06);
         _d.copy(vel).multiplyScalar(1 / spd);
         const ahead = this.world.cast(_o, _d, spd * LAND_LOOKAHEAD + 0.15);
-        if (ahead && ahead.normal.y > 0.05 && vel.dot(ahead.normal) < 0) {
+        const aheadMinY = /^ramp/.test(ahead?.object.userData.collider || '') ? 0.05 : 0.5;
+        if (ahead && ahead.normal.y > aheadMinY && vel.dot(ahead.normal) < 0) {
           const tta = ahead.distance / spd;                      // s to impact
           if (tta < LAND_LOOKAHEAD) {
             const k = tta < 0.05 ? 1 : Math.min(1, dt / tta);
@@ -550,9 +557,10 @@ export class SkatePhysics {
 
     // coming down onto a rail or a coping = a grind (checked before the
     // landing sweep: the edge is above whatever is under it)
-    // (also on the way UP, Skate-style: an ollie that reaches an edge snaps to
-    // it — only the first frames of a fresh pop are excluded)
-    if (this.edges.length && !this.vert && vel.y < 3.5 && this.airTime > 0.04) {
+    // (also on the way UP near the apex, Skate-style: an ollie that just
+    // reaches an edge snaps to it; a board still rising fast passes a lower
+    // edge — a picnic table's bench — and can reach the table top)
+    if (this.edges.length && !this.vert && vel.y < 1.2 && this.airTime > 0.04) {
       const e = this._findEdge();
       if (e) { this._startGrind(e.edge, e.t); return; }
     }
