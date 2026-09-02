@@ -39,7 +39,7 @@ const TURN_LEAVE = 0.8;        // ≈46° of convex turn inside that window = an
 const TURN_TIME = 0.25;        // s — the accumulated turn also fades with time (slow crawls)
 const WALL_DOT = 0.55;         // hit normal · up below this = a wall: slide, don't climb
 const WALL_PROBES = [0.08, 0.45];   // m above the contact point: wheel height, knee height
-const WALL_REACH = 0.24;       // m — keep this much between the board and a wall
+const WALL_REACH = 0.14;       // m — keep this much between the board and a wall
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
 const LAND_LOOKAHEAD = 0.3;    // s — start tilting to the landing surface this early
 const VERT_GUIDE = 2.5;        // 1/s — how firmly a vert air is guided back into the face
@@ -47,7 +47,10 @@ const VERT_OUT = 0.22;         // m — where a vert air hangs, out from the cop
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
 const PIVOT = 0.35;            // fraction of the steer rate available at a standstill (kick-turn)
 const POP_GRACE = 0.14;        // s after leaving a surface in which a pop still counts
-const GRIND_SNAP = 0.28;       // m — how close (horizontally) the board must come down to an edge
+const GRIND_SNAP = 0.42;       // m — how close (horizontally) the board must come down to an edge
+                               // (generous, Skate-style: half a board; the wall probe keeps you
+                               // WALL_REACH off a face, so the window to catch a ledge on a wall
+                               // is the difference)
 const GRIND_DRAG = 1.1;        // m/s² — grinding scrubs speed
 const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall off
 const GRIND_MIN_ALONG = 0.8;   // m/s — travel along the edge needed to catch it at all
@@ -177,7 +180,7 @@ export class SkatePhysics {
       const t = Math.min(e.len, Math.max(0, raw));
       _o.copy(e.a).addScaledVector(e.dir, t);           // nearest point on the edge
       const dh = this.pos.y - _o.y;
-      if (dh < -0.08 || dh > 0.34) continue;             // board must be at/above the edge
+      if (dh < -0.10 || dh > 0.34) continue;             // board must be at/above the edge
       const d = Math.hypot(this.pos.x - _o.x, this.pos.z - _o.z);
       if (d < bestD) { bestD = d; best = { edge: e, t }; }
     }
@@ -480,7 +483,9 @@ export class SkatePhysics {
 
     // coming down onto a rail or a coping = a grind (checked before the
     // landing sweep: the edge is above whatever is under it)
-    if (this.edges.length && !this.vert && vel.y < 0.5 && this.airTime > 0.04) {
+    // (also on the way UP, Skate-style: an ollie that reaches an edge snaps to
+    // it — only the first frames of a fresh pop are excluded)
+    if (this.edges.length && !this.vert && vel.y < 3.5 && this.airTime > 0.04) {
       const e = this._findEdge();
       if (e) { this._startGrind(e.edge, e.t); return; }
     }
