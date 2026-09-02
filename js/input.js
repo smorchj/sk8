@@ -74,6 +74,14 @@ export class Input {
     }
     // mouse/pen: any click on the world = wind-up hold. touch: lower pad only.
     if (!isTouch || this._inPad(e.clientY)) {
+      // IN THE AIR the same press is a GRAB: hold to grab, lift to let go
+      // (owner: the ollie is done normally, the grab is a transition in the air)
+      if (this.cb.isAirborne?.() && !this._trickPtr) {
+        if (this._grabPtr) return;
+        this._grabPtr = { id: e.pointerId };
+        this.cb.grabStart?.();
+        return;
+      }
       if (this._trickPtr) return;
       this._trickPtr = { id: e.pointerId, samples: [{ t: performance.now(), x: e.clientX, y: e.clientY }] };
       this.holdingTrick = true;
@@ -128,6 +136,11 @@ export class Input {
     if (this._edgePtr && e.pointerId === this._edgePtr.id) {
       this._edgePtr = null;
       this._edgeSteer = 0;
+      return;
+    }
+    if (this._grabPtr && e.pointerId === this._grabPtr.id) {
+      this._grabPtr = null;
+      this.cb.grabEnd?.();
       return;
     }
     if (this._trickPtr && e.pointerId === this._trickPtr.id) {
@@ -220,6 +233,9 @@ export class Input {
     if (k === 'w') {
       if (down) this.cb.pushStart?.(); else this.cb.pushEnd?.();
     }
+    if (k === 'g') {                      // grab: hold in the air, release to let go
+      if (down) this.cb.grabStart?.(); else this.cb.grabEnd?.();
+    }
     if (down) {
       if (k === 'q') this.cb.revert?.(-1);
       if (k === 'e') this.cb.revert?.(1);
@@ -227,7 +243,6 @@ export class Input {
       if (k === 'h') this._directTrick('heelflip');
       if (k === 'i') this._directTrick('impossible');
       if (k === 't') this._directTrick('treflip');
-      if (k === 'g') this._directTrick('indy');
       if (k === 'c') this.cb.toggleCam?.();
       if (k === 'x') this.cb.toggleSlow?.();
       if (k === 'r') this.cb.reset?.();

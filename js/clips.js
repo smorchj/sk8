@@ -88,9 +88,8 @@ export class Grab {
     this.key = key;
     this.name = json.name || key;
     this.stance = json.stance === 'goofy' ? 'goofy' : 'regular';
-    this.blendIn = json.blendIn || null;
-    this.blendOut = json.blendOut || null;
-    this.hold = Array.isArray(json.hold) ? json.hold : [0.22, 0.72];   // fractions of the air
+    this.blendIn = json.blendIn || null;      // optional blend-in/out clips (none yet:
+    this.blendOut = json.blendOut || null;    // the game uses the linear fallback)
     const raw = json.pose || json.bones || {};
     const pose = {};
     for (const [n, q] of Object.entries(raw)) {

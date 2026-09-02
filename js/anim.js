@@ -22,6 +22,9 @@ const PREPOP = 0.10;         // start trick clips this long before their pop tag
 const CROUCH_UP = 0.55;      // s to full wind-up
 const CROUCH_DOWN = 0.30;    // s to stand back up
 const FADE = 0.12;           // s default crossfade on state changes
+const GRAB_IN = 0.16;        // s to reach the grab pose after the input
+const GRAB_OUT = 0.14;       // s to let go after release
+const GRAB_LAND = 0.22;      // let go this long before touchdown, no matter what
 const BOARD_REST_Y = 0.07;   // board origin height when flat on ground
 
 // push clip windows (Push_from_standstill, 2.38s) — tuned by eye
@@ -165,7 +168,7 @@ export class SkateAnim {
     if (type === 'flickRight') return this.stance === 'goofy' ? 'kickflip' : 'heelflip';
     if (type === 'flickLeft') return this.stance === 'goofy' ? 'heelflip' : 'kickflip';
     if (type === 'ollie' || type === 'kickflip' || type === 'heelflip'
-      || type === 'impossible' || type === 'treflip' || type === 'indy') return type;
+      || type === 'impossible' || type === 'treflip') return type;
     return null;
   }
 
@@ -189,11 +192,38 @@ export class SkateAnim {
     this.time = 0;
   }
 
+  // Grabs (owner, 2026-09-02): "indy is a grab in air and the ollie is done
+  // normally before that. You should be able to transition while the
+  // character is in the air as long as the board is not flipping." So a grab
+  // is an INPUT DURING THE AIR — hold to grab, release to let go — allowed on
+  // any trick once its board is caught (an ollie's board never flips). The
+  // pose blends in from whatever the air pose is, holds, and is let go before
+  // touchdown so the landing plant always gets the feet back.
+  grabStart(name = 'indy') {
+    const tr = this.trick;
+    const grab = this.grabs[name];
+    if (!grab || this.state !== 'trick' || !tr || !tr.popped || this.phys.grounded) return false;
+    if (tr.grab) { tr.grabHeld = true; return true; }     // re-grab before it faded out
+    const tg = tr.clip.tags;
+    const caught = tr.name === 'ollie' || (tg.catch != null && tr.t >= tg.catch);
+    if (!caught) return false;                             // board still flipping
+    tr.grab = grab;
+    tr.grabVar = grab.variantFor(this.stance);
+    tr.grabT = 0; tr.grabHeld = true; tr.grabRelT = 0; tr.grabW = 0;
+    const pretty = { indy: 'Indy' }[name] || name;
+    tr.label = tr.name === 'ollie' ? tr.label.replace(/Ollie/, pretty) : `${tr.label} ${pretty}`;
+    this.lastTrick = tr.label;
+    this.onTrick?.(tr.label);
+    return true;
+  }
+
+  grabEnd() {
+    const tr = this.trick;
+    if (tr && tr.grab) tr.grabHeld = false;
+  }
+
   _startTrick(name, strength) {
-    // A grab is an ollie with a POSE blended in over the air (owner spec);
-    // without its authored pose the grab simply isn't available.
-    const grab = this.grabs[name] || null;
-    const clip = grab ? this.clips.ollie : this.clips[name];
+    const clip = this.clips[name];
     if (!clip || clip.tags.pop == null) { this._toState('ride'); return; }
     const mirror = clip.stance !== this.stance;
     // pop height comes from WIND-UP × SKILL, never from the clip (owner spec):
@@ -206,10 +236,10 @@ export class SkateAnim {
       t: Math.max(0, clip.tags.pop - PREPOP),
       rate: 1,
       popped: false,
-      grab, grabVar: grab ? grab.variantFor(this.stance) : null,
+      grab: null, grabVar: null,          // set by grabStart() in the air
     };
     const fakie = this.phys.rollSign < 0;
-    const pretty = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', impossible: 'Impossible', treflip: '360 Flip', indy: 'Indy' }[name];
+    const pretty = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', impossible: 'Impossible', treflip: '360 Flip' }[name];
     this.trick.label = (fakie ? 'Fakie ' : '') + pretty + (mirror ? '' : '');
     this._toState('trick');
   }
@@ -366,7 +396,7 @@ export class SkateAnim {
       if (!tr.popped && pose.board) {     // wind-in: board glued to the ground
         pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y);
       }
-      if (tr.popped && tr.grabVar) this._grabLayer(tr, pose);
+      if (tr.popped && tr.grabVar) this._grabLayer(tr, pose, dt);
       // wrap-pivot retarget (impossible): re-pin the board's orbit to the
       // RENDERED back foot so the wrap clears any body's stance
       if (tr.popped && pose.board && tr.clip.wrapPivotZ != null && this.skel) {
@@ -469,23 +499,26 @@ export class SkateAnim {
 
   // ── grabs ─────────────────────────────────────────────────────────────────
 
-  // Blend the authored grab POSE over the trick's air. Weight: 0 at pop, full
-  // between the hold fractions, 0 again at land — the LINEAR (smoothstep)
-  // fallback the owner described for grabs without blend-in/out animations.
-  // While the grab holds, the board is rebuilt FROM THE FEET (nose along the
-  // back→front foot line, deck seated under the ankles) so the tuck carries
-  // the board with it — a grabbed board never leaves the soles.
-  _grabLayer(tr, pose) {
-    const tg = tr.clip.tags;
-    const landT = tg.land ?? tr.clip.duration;
-    const air = Math.max(0.05, landT - tg.pop);
-    const u = (tr.t - tg.pop) / air;
-    const [a, b] = tr.grab.hold;
-    let w = u < a ? u / Math.max(0.05, a) : u > b ? (1 - u) / Math.max(0.05, 1 - b) : 1;
-    w = Math.min(1, Math.max(0, w));
-    w = w * w * (3 - 2 * w);
+  // Blend the authored grab POSE over whatever the air pose is. Weight ramps
+  // in from the grab input, holds while held, ramps out on release — and is
+  // forced out before touchdown from the physics' remaining airtime — the
+  // LINEAR (smoothstep) fallback the owner described for grabs without
+  // blend-in/out animations. While it holds, the board is re-seated under the
+  // RENDERED feet so the tuck carries the board — a grabbed board never
+  // leaves the soles.
+  _grabLayer(tr, pose, dt) {
+    tr.grabT += dt;
+    if (!tr.grabHeld) tr.grabRelT += dt;
+    const phys = this.phys;
+    const vy = phys.vel.y, y = Math.max(0, phys.pos.y);
+    const remain = (vy + Math.sqrt(vy * vy + 2 * G * y)) / G;     // s until touchdown
+    const ss = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+    const w = ss(tr.grabT / GRAB_IN) * ss(1 - tr.grabRelT / GRAB_OUT) * ss(remain / GRAB_LAND);
     tr.grabW = w;
-    if (w <= 0.001) return;
+    if (w <= 0.001) {
+      if (!tr.grabHeld || remain < GRAB_LAND * 0.5) { tr.grab = null; tr.grabVar = null; }
+      return;
+    }
     const gv = tr.grabVar;
     // hips: the authored lean relative to the board (the clip's board, before
     // it is re-seated under the feet below — the lean is what shapes the tuck)

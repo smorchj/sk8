@@ -273,6 +273,8 @@ const input = new Input({
   pushStart: () => anim.pushStart(),
   pushEnd: () => anim.pushEnd(),
   isAirborne: () => !physics.grounded,
+  grabStart: () => anim.grabStart('indy'),
+  grabEnd: () => anim.grabEnd(),
   manualStart: () => anim.manualStart(),
   manualEnd: () => anim.manualEnd(),
   revert: (d) => anim.revert(d),
@@ -376,7 +378,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip G indy\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
 
 function updateHUD() {
   const p = physics;
@@ -420,11 +422,12 @@ function tick(dt) {
   if (trickFlashT > 0) { trickFlashT -= dt; if (trickFlashT <= 0) trickEl.classList.remove('show'); }
 }
 
+let paused = false;          // SK8.pause(): the live loop only renders; SK8.step() drives time
 function frame() {
   requestAnimationFrame(frame);
   let dt = Math.min(clock.getDelta(), 0.05);
   if (slowmo) dt *= 0.25;
-  tick(dt);
+  if (!paused) tick(dt);
   updateHUD();
   renderer.render(scene, camera);
 }
@@ -435,6 +438,7 @@ frame();
 let inspect = false;
 window.SK8 = {
   physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill,
+  pause(on = true) { paused = on; },
   get anim() { return anim; },
   get rig() { return rig; },
   get clips() { return clips; },
