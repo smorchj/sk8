@@ -51,6 +51,18 @@ mesh's visual nose is on -Z → one rotY(π) inner flip in main.js, nothing else
 
 ## creategamecharacters.ai
 
+- THE ANIMATION TOOL (what SKATE.md calls "the Animation Tool" / `ps.*`) is
+  the site's Pose Studio: `https://creategamecharacters.ai/pose-studio.html`,
+  driven via `window.poseStudio` (82 verbs: listAnimations, loadAnimation,
+  seek, frame, snapshotPose, keyPose, applyPose, exportAnimation,
+  saveAnimationAs, loadVideo/mocapVideo, actionTags, groundTake, ik*, …).
+  It needs sign-in + a connected save folder (`C:\Users\smorc\Desktop\Clothes`).
+  Drive it in the OWNER'S CHROME (Claude-in-Chrome tools) — the Claude
+  browser pane is banned for site work (owner, 2026-09-02: it cannot write).
+  Grabs are POSES blended to (optional blend-in/out clips, linear fallback):
+  snapshot in the Studio → `tools/pose-from-studio.mjs` → `assets/poses/`.
+  Mocap source videos go in `Desktop\skateboard-demo\video\`; the dev server
+  (`_scratch/` drop box, CORS) is how the Studio pulls/pushes files.
 - SDK: `https://creategamecharacters.ai/sdk/v1.js`, docs at
   `/agent/integration/sdk.md`, asset fetcher `/sdk/fetch-assets.mjs`.
 - Project: "sk8opia farm demo" id `4bc9710e-e034-42d7-8ea0-93c931606134`
