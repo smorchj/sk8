@@ -92,15 +92,16 @@ export class Input {
       this._trickPtr.samples.push({ t: performance.now(), x: e.clientX, y: e.clientY });
       if (this._trickPtr.samples.length > 400) this._trickPtr.samples.shift();
       this._fade = 1;
-      // MANUAL: pull BACK (down) on the pad and HOLD — a quick down-flick is
-      // still a cancel; only a sustained pull becomes a manual
+      // MANUAL (owner spec): DOUBLE swipe down — a completed down-flick armed
+      // recently, then a second downward pull on a new touch enters the manual
+      // and holds it until the finger lifts.
       const p0 = this._trickPtr.samples[0];
       const dy = e.clientY - p0.y, dx = e.clientX - p0.x;
-      if (!this._manualOn && !this._manualTimer && dy > 55 && dy > Math.abs(dx)) {
-        this._manualTimer = setTimeout(() => {
-          this._manualTimer = null;
-          if (this._trickPtr) { this._manualOn = true; this.cb.manualStart?.(); }
-        }, 180);
+      if (!this._manualOn && this._downFlickAt &&
+          performance.now() - this._downFlickAt < 450 && dy > 55 && dy > Math.abs(dx)) {
+        this._downFlickAt = 0;
+        this._manualOn = true;
+        this.cb.manualStart?.();
       }
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
       const p = this._steerPtr;
@@ -133,13 +134,14 @@ export class Input {
       const samples = this._trickPtr.samples;
       this._trickPtr = null;
       this.holdingTrick = false;
-      if (this._manualTimer) { clearTimeout(this._manualTimer); this._manualTimer = null; }
       if (this._manualOn) {                       // release ends the manual
         this._manualOn = false;
         this.cb.manualEnd?.();
         return;
       }
-      this.cb.windupEnd?.(cancelled ? { type: 'cancel' } : this._classify(samples));
+      const g = cancelled ? { type: 'cancel' } : this._classify(samples);
+      if (g.type === 'downflick') this._downFlickAt = performance.now();
+      this.cb.windupEnd?.(g);
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
       this._steerPtr = null;
       this._dragSteer = 0;
@@ -193,7 +195,7 @@ export class Input {
     if (dist < FLICK_MIN_PX || speed < FLICK_MIN_SPEED) return { type: 'cancel' };
     const strength = Math.min(1, speed / 1.6);
     if (-dy > Math.abs(dx)) return { type: 'ollie', strength };
-    if (dy > Math.abs(dx)) return { type: 'cancel' };            // downward flick
+    if (dy > Math.abs(dx)) return { type: 'downflick' };         // arms the manual double-swipe
     return { type: dx > 0 ? 'flickRight' : 'flickLeft', strength };
   }
 
@@ -207,8 +209,13 @@ export class Input {
       if (down) { this.holdingTrick = true; this.cb.windupStart?.(); }
       else { this.holdingTrick = false; this.cb.windupEnd?.({ type: 'ollie', strength: 1 }); }
     }
-    if (k === 'm') {
-      if (down) this.cb.manualStart?.(); else this.cb.manualEnd?.();
+    if (k === 's' && down && performance.now() - (this._lastSDown || 0) < 300) {
+      this._sManual = true;
+      this.cb.manualStart?.();
+    }
+    if (k === 's') {
+      if (down) this._lastSDown = performance.now();
+      else if (this._sManual) { this._sManual = false; this.cb.manualEnd?.(); }
     }
     if (k === 'w') {
       if (down) this.cb.pushStart?.(); else this.cb.pushEnd?.();
@@ -225,7 +232,7 @@ export class Input {
       if (k === 'x') this.cb.toggleSlow?.();
       if (k === 'r') this.cb.reset?.();
     }
-    this.cb.brake?.(this._keys.has('s'));
+    this.cb.brake?.(this._keys.has('s') && !this._sManual);
   }
 
   _directTrick(name) {
