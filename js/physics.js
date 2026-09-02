@@ -56,6 +56,7 @@ const GRIND_SNAP = 0.42;       // m — how close (horizontally) the board must 
 const GRIND_DRAG = 1.1;        // m/s² — grinding scrubs speed
 const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall off
 const GRIND_MIN_ALONG = 0.8;   // m/s — travel along the edge needed to catch it at all
+const GRIND_INSIDE = 0.12;     // m — how far inside a ledge's top the board may be and still catch its edge
 const GRIND_LIFT = { '5050': 0.055, boardslide: 0.125 };   // root below the edge: trucks / deck on it
 const GRIND_RECATCH = 0.45;    // s after leaving an edge before the same edge can catch again
 const GRIND_IGNORE = 0.3;      // s after leaving a rail during which its prop doesn't collide
@@ -199,6 +200,9 @@ export class SkatePhysics {
       _o.copy(e.a).addScaledVector(e.dir, t);           // nearest point on the edge
       const dh = this.pos.y - _o.y;
       if (dh < -0.10 || dh > 0.34) continue;             // board must be at/above the edge
+      // a ledge catches from its OPEN side (or a hair inside): landing on
+      // the middle of a bench or a table top rides it instead
+      if (e.open && (this.pos.x - _o.x) * e.open.x + (this.pos.z - _o.z) * e.open.z < -GRIND_INSIDE) continue;
       const d = Math.hypot(this.pos.x - _o.x, this.pos.z - _o.z);
       if (d < bestD) { bestD = d; best = { edge: e, t }; }
     }
