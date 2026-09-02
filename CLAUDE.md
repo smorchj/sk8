@@ -58,7 +58,8 @@ mesh's visual nose is on -Z → one rotY(π) inner flip in main.js, nothing else
   saveAnimationAs, loadVideo/mocapVideo, actionTags, groundTake, ik*, …).
   It needs sign-in + a connected save folder (`C:\Users\smorc\Desktop\Clothes`).
   Drive it in the OWNER'S CHROME (Claude-in-Chrome tools) — the Claude
-  browser pane is banned for site work (owner, 2026-09-02: it cannot write).
+  browser pane is banned for the creategamecharacters app (owner,
+  2026-09-02: it cannot write). The pane is fine for the GAME preview.
   Grabs are POSES blended to (optional blend-in/out clips, linear fallback):
   snapshot in the Studio → `tools/pose-from-studio.mjs` → `assets/poses/`.
   Mocap source videos go in `Desktop\skateboard-demo\video\`; the dev server
