@@ -18,6 +18,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Rig } from './rig.js';
 import { buildSkeletonInfo, loadClips, loadGrabs } from './clips.js';
 import { buildPark } from './park.js';
+import { MapEditor } from './editor.js';
 import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
 import { SkateAnim } from './anim.js';
@@ -374,7 +375,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor';
 
 function updateHUD() {
   const p = physics;
@@ -435,9 +436,15 @@ frame();
 
 // ── debug handle (LAW ZERO: we look before we claim) ────────────────────────
 
+// the map editor (M): pauses the game, frees the camera, edits the layout
+const editor = new MapEditor({
+  renderer, camera, controls, park, physics, input,
+  setPaused: (on) => { paused = on; freecam = on; },
+});
+
 let inspect = false;
 window.SK8 = {
-  physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill,
+  physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill, park, editor,
   pause(on = true) { paused = on; },
   get anim() { return anim; },
   get rig() { return rig; },

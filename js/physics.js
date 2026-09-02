@@ -141,6 +141,16 @@ export class SkatePhysics {
     // ollie AT the coping is the move, and the clip's pop tag lands late
     if (!this.grounded && this.airTime > POP_GRACE) return;
     if (!this.grounded) { this.vel.y += vy; return; }
+    const onRamp = /^ramp/.test(this.surface || '');
+    if (this.up.y < 0.6 || (onRamp && this.up.y < 0.97)) {
+      // popping ON a transition: a vert air with extra height — the momentum
+      // that was carrying the board into the ramp is dropped, the same as at
+      // the lip (owner: "I almost always ollie over and end up behind"). On
+      // a quarter pipe that holds for the whole curve except its flat foot.
+      this._leaveVert();
+      this.vel.y += vy * (0.55 + 0.45 * Math.max(0, this.up.y));
+      return;
+    }
     this.grounded = false;
     this.vel.y += vy;
     this.airTime = 0;
@@ -437,6 +447,16 @@ export class SkatePhysics {
   // way): the tangent velocity already points up the face; remember the
   // face so the air can be guided back into it and the rider comes down on
   // the transition — fakie unless they spin.
+  // leave as a vert air whatever the steepness (a pop on a transition)
+  _leaveVert() {
+    const keep = this.up.y;
+    this.up.y = Math.min(this.up.y, 0.59);
+    this.up.normalize();
+    this._leave();
+    this.up.y = keep;
+    this.up.normalize();
+  }
+
   _leave() {
     this.grounded = false;
     this.airTime = 0;
@@ -536,7 +556,10 @@ export class SkatePhysics {
       // landing whether you came out of it or dropped into it. A wall
       // (steeper) is slid along while still falling (the root never "lands"
       // lying on a wall)
-      const rideable = hit && (hit.normal.y > (this.vert ? 0.05 : 0.17));
+      // (steep faces are landings only on transition colliders — a rail's
+      // brace or a ledge's wall is not; owner: "rides sideways in strange places")
+      const transition = hit && /^ramp/.test(hit.object.userData.collider || '');
+      const rideable = hit && (hit.normal.y > ((this.vert || transition) ? 0.05 : 0.5));
       if (hit && vel.dot(hit.normal) < 0 && !rideable) {
         vel.addScaledVector(hit.normal, -vel.dot(hit.normal) * 1.02);
         this.pos.copy(hit.point).addScaledVector(hit.normal, 0.03).addScaledVector(WORLD_UP, -0.06);

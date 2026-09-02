@@ -59,7 +59,8 @@ export class Input {
   _inPad(y) { return y > innerHeight * (1 - PAD_FRAC); }
 
   _down(e) {
-    if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel')) return;
+    if (this.disabled) return;                  // the map editor owns the mouse
+    if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel, #mapEditor')) return;
     const isTouch = e.pointerType === 'touch';
     // touch: hold a screen EDGE to spin in the air (owner: no way to 180 on
     // phone otherwise). Also armable DURING wind-up so the rotation starts the
@@ -96,6 +97,7 @@ export class Input {
   }
 
   _move(e) {
+    if (this.disabled) return;
     if (this._trickPtr && e.pointerId === this._trickPtr.id) {
       this._trickPtr.samples.push({ t: performance.now(), x: e.clientX, y: e.clientY });
       if (this._trickPtr.samples.length > 400) this._trickPtr.samples.shift();
@@ -133,6 +135,7 @@ export class Input {
   }
 
   _up(e, cancelled = false) {
+    if (this.disabled) return;
     if (this._edgePtr && e.pointerId === this._edgePtr.id) {
       this._edgePtr = null;
       this._edgeSteer = 0;
@@ -213,6 +216,7 @@ export class Input {
   }
 
   _key(e, down) {
+    if (this.disabled) return;
     if (e.repeat) return;
     let k = e.key.toLowerCase();
     if (e.code === 'Space' || k === 'space' || k === 'spacebar') k = ' ';

@@ -204,25 +204,37 @@ export class SkateAnim {
   // any trick once its board is caught (an ollie's board never flips). The
   // pose blends in from whatever the air pose is, holds, and is let go before
   // touchdown so the landing plant always gets the feet back.
+  // The input is STICKY (owner: the indy felt unresponsive — a press just
+  // before the pop or the lip was thrown away): hold the button whenever,
+  // the grab engages the moment the air is eligible, and lets go on release.
   grabStart(name = 'indy') {
+    this.wantGrab = name;
+    return this._tryGrab();
+  }
+
+  _tryGrab() {
+    const name = this.wantGrab;
     const tr = this.trick;
-    const grab = this.grabs[name];
+    const grab = name && this.grabs[name];
     if (!grab || this.state !== 'trick' || !tr || !tr.popped || this.phys.grounded) return false;
     if (tr.grab) { tr.grabHeld = true; return true; }     // re-grab before it faded out
     const tg = tr.clip.tags;
-    const caught = tr.name === 'ollie' || (tg.catch != null && tr.t >= tg.catch);
+    // a plain air (lip, ledge) and an ollie never flip; a flip trick only
+    // after its catch
+    const caught = tr.name === 'ollie' || tr.name === 'air' || (tg.catch != null && tr.t >= tg.catch);
     if (!caught) return false;                             // board still flipping
     tr.grab = grab;
     tr.grabVar = grab.variantFor(this.stance);
     tr.grabT = 0; tr.grabHeld = true; tr.grabRelT = 0; tr.grabW = 0;
     const pretty = { indy: 'Indy' }[name] || name;
-    tr.label = tr.name === 'ollie' ? tr.label.replace(/Ollie/, pretty) : `${tr.label} ${pretty}`;
+    tr.label = (tr.name === 'ollie' || tr.name === 'air') ? pretty : `${tr.label} ${pretty}`;
     this.lastTrick = tr.label;
     this.onTrick?.(tr.label);
     return true;
   }
 
   grabEnd() {
+    this.wantGrab = null;
     const tr = this.trick;
     if (tr && tr.grab) tr.grabHeld = false;
   }
@@ -328,8 +340,10 @@ export class SkateAnim {
     // deferred air pose: only if we are still airborne after the delay
     if (this._airPending != null) {
       if (phys.grounded) this._airPending = null;
-      else if ((this._airPending -= dt) <= 0) { this._airPending = null; this._startAir(); }
+      else if ((this._airPending -= dt) <= 0 || this.wantGrab) { this._airPending = null; this._startAir(); }
     }
+    // a held grab button engages as soon as the air allows it
+    if (this.wantGrab && !(this.trick && this.trick.grab)) this._tryGrab();
 
     // crouch envelope
     if (this.state === 'windup' && this.holding) {

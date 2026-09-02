@@ -32,16 +32,24 @@ export class CollisionWorld {
     this.active = this.meshes.filter(m => !under.has(m));
   }
 
-  // register every mesh under `root` (world matrices must be final)
+  // register every mesh under `root` (world matrices must be final); meshes
+  // flagged userData.noCollide (a quarter pipe's visual shell) are skipped
   add(root, tag = root.name || 'mesh') {
     root.updateWorldMatrix(true, true);
     root.traverse(o => {
-      if (!o.isMesh || !o.geometry) return;
+      if (!o.isMesh || !o.geometry || o.userData.noCollide) return;
       if (!o.geometry.boundsTree) o.geometry.boundsTree = new MeshBVH(o.geometry);
-      o.userData.collider = tag;
+      if (o.userData.collider !== 'proxy') o.userData.collider = tag;
+      else o.userData.collider = tag;             // proxies report their prop's tag
       this.meshes.push(o);
     });
     if (!this.ignored) this.active = this.meshes;
+  }
+
+  clear() {
+    this.meshes.length = 0;
+    this.ignored = null;
+    this.active = this.meshes;
   }
 
   // nearest surface along a ray; the normal is flipped to face the ray
