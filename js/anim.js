@@ -25,6 +25,7 @@ const FADE = 0.12;           // s default crossfade on state changes
 const GRAB_IN = 0.16;        // s to reach the grab pose after the input
 const GRAB_OUT = 0.14;       // s to let go after release
 const GRAB_LAND = 0.22;      // let go this long before touchdown, no matter what
+const AIR_POSE_DELAY = 0.12; // s airborne before a plain leave shows the air pose
 const BOARD_REST_Y = 0.07;   // board origin height when flat on ground
 
 // push clip windows (Push_from_standstill, 2.38s) — tuned by eye
@@ -272,7 +273,11 @@ export class SkateAnim {
       // compact air pose — the ollie clip just before its catch — so the
       // landing machinery (plant, fold-in) works exactly like a trick's
       if (e.type === 'leave' && (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'windup' || this.state === 'grind')) {
-        this._startAir();
+        // a vert air or a grind exit is real air right away; anything else
+        // waits AIR_POSE_DELAY — a hop over a model edge must not read as a
+        // jump (owner: "strange self jump on all props")
+        if (e.vert || this.state === 'grind') this._startAir();
+        else this._airPending = AIR_POSE_DELAY;
         continue;
       }
       // the board caught a rail/coping: 50-50 or boardslide, a procedural
@@ -318,6 +323,12 @@ export class SkateAnim {
         this._fadeDur = 0.08;
         this._beginPlant(tr);
       }
+    }
+
+    // deferred air pose: only if we are still airborne after the delay
+    if (this._airPending != null) {
+      if (phys.grounded) this._airPending = null;
+      else if ((this._airPending -= dt) <= 0) { this._airPending = null; this._startAir(); }
     }
 
     // crouch envelope

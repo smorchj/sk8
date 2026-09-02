@@ -166,6 +166,12 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     ramp_haven: [
       [[-0.55, -0.06, 0.41], [0.55, -0.06, 0.41], 'ledge'],    // front ledge, 0.64 m high in the park
       [[-0.3, 0.10, 0.17], [0.3, 0.10, 0.17], 'ledge'],        // the plateau's front edge, 1.43 m
+      // the back rim (the top block, owner: "this one"): its front edge is
+      // level over the plateau (2.14 m) and slopes down over both side
+      // banks — three joined segments so a grind runs on down the slope
+      [[-0.92, -0.059, -0.27], [-0.3, 0.241, -0.27], 'ledge'],
+      [[-0.3, 0.241, -0.27], [0.3, 0.241, -0.27], 'ledge'],
+      [[0.3, 0.241, -0.27], [0.92, -0.059, -0.27], 'ledge'],
     ],
   };
   const edges = [];
@@ -175,7 +181,20 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       const b = p.localToWorld(new THREE.Vector3(...lb));
       const dir = b.clone().sub(a);
       const len = dir.length();
-      edges.push({ a, b, dir: dir.multiplyScalar(1 / len), len, kind, name: `${p.userData.park.name} ${kind}`, prop: p });
+      dir.multiplyScalar(1 / len);
+      // which side of a ledge is open (the drop)? probe the surface height
+      // 0.3 m to each side of the edge's middle; the lower side is open
+      let open = null;
+      if (kind === 'ledge') {
+        const mid = a.clone().add(b).multiplyScalar(0.5);
+        const perp = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+        const hAt = (s) => {
+          const h = world.cast(mid.clone().addScaledVector(perp, s).add(new THREE.Vector3(0, 3, 0)), new THREE.Vector3(0, -1, 0), 20);
+          return h ? h.point.y : -999;
+        };
+        open = perp.clone().multiplyScalar(hAt(0.3) < hAt(-0.3) ? 1 : -1);
+      }
+      edges.push({ a, b, dir, len, kind, name: `${p.userData.park.name} ${kind}`, prop: p, open });
     }
   }
 

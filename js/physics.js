@@ -33,7 +33,9 @@ const AIR_SPIN_RATE = 6.0;     // rad/s of root spin at full input while airborn
 const SUBSTEP = 1 / 240;       // s — fixed physics step (curved transitions need it)
 const PROBE_UP = 0.35;         // m — ground probe starts this far out along the surface normal
 const PROBE_DOWN = 0.32;       // m — surface may be this far below and still count as ground
-const DROP_MIN = 0.07;         // m — a sudden drop bigger than this is a ledge: the wheels roll off
+const DROP_MIN = 0.22;         // m — a sudden drop bigger than this is a ledge: the wheels roll off
+                               // (smaller steps — model edges, stair treads — are just snapped
+                               // down; owner: every little step read as a self-jump)
 const TURN_WINDOW = 0.25;      // m of travel over which convex turning is accumulated
 const TURN_LEAVE = 0.8;        // ≈46° of convex turn inside that window = an edge, leave (a 28° hip crest is not)
 const TURN_TIME = 0.25;        // s — the accumulated turn also fades with time (slow crawls)
@@ -56,7 +58,8 @@ const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall of
 const GRIND_MIN_ALONG = 0.8;   // m/s — travel along the edge needed to catch it at all
 const GRIND_LIFT = { '5050': 0.055, boardslide: 0.125 };   // root below the edge: trucks / deck on it
 const GRIND_RECATCH = 0.45;    // s after leaving an edge before the same edge can catch again
-const GRIND_IGNORE = 0.3;      // s after leaving an edge during which its prop doesn't collide
+const GRIND_IGNORE = 0.3;      // s after leaving a rail during which its prop doesn't collide
+const GRIND_EXIT_OUT = 0.3;    // m — how far a ledge exit steps toward the ledge's open side
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -238,7 +241,13 @@ export class SkatePhysics {
     // first sweep starts inside its bar and "lands" on its underside
     const top = g.edge.a.y + (g.edge.b.y - g.edge.a.y) * (g.t / g.edge.len);
     if (this.pos.y < top + 0.01) this.pos.y = top + 0.01;
-    if (this.world && g.edge.prop) { this.world.setIgnored(g.edge.prop); this._ignoreT = GRIND_IGNORE; }
+    // come off toward the OPEN side of a ledge (a fall straight down the
+    // corner line can thread into the block); the park measured which side
+    // is open when it built the edge
+    if (g.edge.open) this.pos.addScaledVector(g.edge.open, GRIND_EXIT_OUT);
+    // only a RAIL's prop is ignored (a thin bar the root sat inside); a ledge
+    // belongs to a solid block — ignoring that let a stall fall through it
+    if (this.world && g.edge.prop && g.edge.kind === 'rail') { this.world.setIgnored(g.edge.prop); this._ignoreT = GRIND_IGNORE; }
     this.events.push({ type: 'grindEnd', kind: g.kind, reason });
   }
 
@@ -370,10 +379,19 @@ export class SkatePhysics {
       // and used to fire a bogus escape onto the deck)
       if ((hit && hit.backface) || this.world.inside(_o.copy(this.pos).addScaledVector(up, 0.04))) {
         // INSIDE a mesh (owner: "stuck inside the quarter pipe") — get back
-        // onto the top surface straight above and stop
-        hit = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, 6), DOWN, 12);
-        up.copy(WORLD_UP);
+        // onto the top surface straight above and stop. Done here, in full:
+        // letting the escape ray fall through to the drop test below read
+        // its length as a 5 m ledge and threw the rider back in
+        const top = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, 6), DOWN, 12);
+        if (top && !top.backface) {
+          this.pos.copy(top.point);
+          up.copy(top.normal);
+          this.groundY = this.pos.y;
+          this.surface = top.object.userData.collider || null;
+        }
         vel.set(0, 0, 0);
+        this._turn = 0; this._prevN = null;
+        return;
       }
       if (hit) {
         // detachment over a CONVEX edge (a coping, the deck's back): the
@@ -497,6 +515,23 @@ export class SkatePhysics {
       _d.copy(vel).normalize();
       // (reach past the lift so a surface right under a slow fall is found)
       const hit = this.world.cast(_o, _d, step + 0.12);
+      if (hit && hit.backface) {
+        // we are INSIDE a solid (a corner case at a ledge's edge): sliding on
+        // its inner faces just oscillates in place — climb out onto the top
+        const top = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, 6), DOWN, 12);
+        if (top && !top.backface) {
+          this.pos.copy(top.point);
+          this.up.copy(top.normal);
+          vel.set(0, 0, 0);
+          this.grounded = true;
+          this.groundY = this.pos.y;
+          this.surface = top.object.userData.collider || null;
+          this.vert = null;
+          this._surfaceForward();
+          this.events.push({ type: 'land', airTime: this.airTime });
+        }
+        return;
+      }
       // rideable landing: anything up to ~80° — a transition's face is a
       // landing whether you came out of it or dropped into it. A wall
       // (steeper) is slid along while still falling (the root never "lands"
