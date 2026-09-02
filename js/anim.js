@@ -28,9 +28,10 @@ const BOARD_REST_Y = 0.07;   // board origin height when flat on ground
 const PUSH_IN = 0.20, PUSH_OUT = 2.30, STROKE_A = 0.55, STROKE_B = 1.75;
 
 export class SkateAnim {
-  constructor({ rig, clips, physics, stance, skel, getSkill }) {
+  constructor({ rig, clips, physics, stance, skel, getSkill, grabs }) {
     this.rig = rig;
     this.clips = clips;
+    this.grabs = grabs || {};             // grab POSES (indy…), blended over the ollie air
     this.phys = physics;
     this.stance = stance;                 // 'regular' | 'goofy' (player's choice)
     this.skel = skel || null;             // for FK foot planting (updated on character swap)
@@ -189,7 +190,10 @@ export class SkateAnim {
   }
 
   _startTrick(name, strength) {
-    const clip = this.clips[name];
+    // A grab is an ollie with a POSE blended in over the air (owner spec);
+    // without its authored pose the grab simply isn't available.
+    const grab = this.grabs[name] || null;
+    const clip = grab ? this.clips.ollie : this.clips[name];
     if (!clip || clip.tags.pop == null) { this._toState('ride'); return; }
     const mirror = clip.stance !== this.stance;
     // pop height comes from WIND-UP × SKILL, never from the clip (owner spec):
@@ -202,6 +206,7 @@ export class SkateAnim {
       t: Math.max(0, clip.tags.pop - PREPOP),
       rate: 1,
       popped: false,
+      grab, grabVar: grab ? grab.variantFor(this.stance) : null,
     };
     const fakie = this.phys.rollSign < 0;
     const pretty = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', impossible: 'Impossible', treflip: '360 Flip', indy: 'Indy' }[name];
@@ -361,6 +366,7 @@ export class SkateAnim {
       if (!tr.popped && pose.board) {     // wind-in: board glued to the ground
         pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y);
       }
+      if (tr.popped && tr.grabVar) this._grabLayer(tr, pose);
       // wrap-pivot retarget (impossible): re-pin the board's orbit to the
       // RENDERED back foot so the wrap clears any body's stance
       if (tr.popped && pose.board && tr.clip.wrapPivotZ != null && this.skel) {
@@ -459,6 +465,92 @@ export class SkateAnim {
     this._updatePlant(dt);
 
     return this.out;
+  }
+
+  // ── grabs ─────────────────────────────────────────────────────────────────
+
+  // Blend the authored grab POSE over the trick's air. Weight: 0 at pop, full
+  // between the hold fractions, 0 again at land — the LINEAR (smoothstep)
+  // fallback the owner described for grabs without blend-in/out animations.
+  // While the grab holds, the board is rebuilt FROM THE FEET (nose along the
+  // back→front foot line, deck seated under the ankles) so the tuck carries
+  // the board with it — a grabbed board never leaves the soles.
+  _grabLayer(tr, pose) {
+    const tg = tr.clip.tags;
+    const landT = tg.land ?? tr.clip.duration;
+    const air = Math.max(0.05, landT - tg.pop);
+    const u = (tr.t - tg.pop) / air;
+    const [a, b] = tr.grab.hold;
+    let w = u < a ? u / Math.max(0.05, a) : u > b ? (1 - u) / Math.max(0.05, 1 - b) : 1;
+    w = Math.min(1, Math.max(0, w));
+    w = w * w * (3 - 2 * w);
+    tr.grabW = w;
+    if (w <= 0.001) return;
+    const gv = tr.grabVar;
+    // hips: the authored lean relative to the board (the clip's board, before
+    // it is re-seated under the feet below — the lean is what shapes the tuck)
+    if (gv.hipsLean && pose.hipsRot && pose.board) {
+      _qb.fromArray(pose.board.quat).multiply(_qc.fromArray(gv.hipsLean));
+      _qa.fromArray(pose.hipsRot);
+      if (_qa.dot(_qb) < 0) _qb.set(-_qb.x, -_qb.y, -_qb.z, -_qb.w);
+      _qa.slerp(_qb, w);
+      pose.hipsRot = [_qa.x, _qa.y, _qa.z, _qa.w];
+    }
+    for (const [n, q] of Object.entries(gv.pose)) {
+      const cur = pose.bones.get(n);
+      cur ? _qa.fromArray(cur) : _qa.identity();
+      _qb.fromArray(q);
+      _qa.slerp(_qb, w);
+      pose.bones.set(n, [_qa.x, _qa.y, _qa.z, _qa.w]);
+    }
+    if (!pose.board || !pose.hipsPos || !pose.hipsRot || !this.skel) return;
+    // feet frame (see clips.js Grab): ankles + balls of the RENDERED body
+    const getD = (bn) => pose.bones.get(bn) || null;
+    const L = this.stance === 'regular';
+    const feet = fkChain(this.skel, ['FootL', 'FootR', 'BallL', 'BallR'], getD, pose.hipsPos, pose.hipsRot);
+    const front = feet.get(L ? 'FootL' : 'FootR'), back = feet.get(L ? 'FootR' : 'FootL');
+    const ballL = feet.get('BallL'), ballR = feet.get('BallR');
+    if (!front || !back || !ballL || !ballR) return;
+    const mid = _vc.addVectors(front.pos, back.pos).multiplyScalar(0.5);
+    _v.subVectors(front.pos, back.pos).normalize();                          // z: nose
+    // y: the feet's own up (bind up axes rotated by the current feet), ⟂ z —
+    // identical to tools/pose-from-studio.mjs so the authored offset holds
+    const fu = this._footUpLocal();
+    _vd.copy(fu.L).applyQuaternion(feet.get('FootL').quat)
+      .add(_ve.copy(fu.R).applyQuaternion(feet.get('FootR').quat));
+    _vb.copy(_vd).addScaledVector(_v, -_vd.dot(_v)).normalize();            // y: deck normal
+    if (_vb.lengthSq() < 0.5) return;
+    _va.crossVectors(_vb, _v).normalize();                                   // x = y × z
+    _m.makeBasis(_va, _vb, _v);
+    _qb.setFromRotationMatrix(_m);
+    if (gv.boardPos && gv.boardQuat) {
+      _vd.copy(mid).addScaledVector(_va, gv.boardPos[0]).addScaledVector(_vb, gv.boardPos[1]).addScaledVector(_v, gv.boardPos[2]);
+      _qb.multiply(_qc.fromArray(gv.boardQuat));
+    } else {
+      _vd.copy(mid).addScaledVector(_vb, -0.21);        // no authored board: deck under the ankles
+    }
+    _qa.fromArray(pose.board.quat);
+    if (_qa.dot(_qb) < 0) _qb.set(-_qb.x, -_qb.y, -_qb.z, -_qb.w);
+    _qa.slerp(_qb, w);
+    pose.board.quat = [_qa.x, _qa.y, _qa.z, _qa.w];
+    pose.board.pos = [
+      pose.board.pos[0] + (_vd.x - pose.board.pos[0]) * w,
+      pose.board.pos[1] + (_vd.y - pose.board.pos[1]) * w,
+      pose.board.pos[2] + (_vd.z - pose.board.pos[2]) * w,
+    ];
+  }
+
+  // each foot bone's "up" in its own bind frame (bind-pose world up pulled
+  // back through the bind chain) — cached per skeleton
+  _footUpLocal() {
+    if (this._footUp && this._footUp.skel === this.skel) return this._footUp;
+    const bind = fkChain(this.skel, ['FootL', 'FootR'], () => null, [0, 0, 0], this.skel.hipsBindQuat);
+    const up = (side) => {
+      const f = bind.get('Foot' + side);
+      return f ? new THREE.Vector3(0, 1, 0).applyQuaternion(f.quat.clone().invert()) : new THREE.Vector3(0, 1, 0);
+    };
+    this._footUp = { skel: this.skel, L: up('L'), R: up('R') };
+    return this._footUp;
   }
 
   // ── landing foot plant ────────────────────────────────────────────────────
@@ -769,6 +861,7 @@ export class SkateAnim {
 
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _v = new THREE.Vector3();
+const _m = new THREE.Matrix4();
 const _y = new THREE.Vector3(0, 1, 0);
 const _z = new THREE.Vector3(0, 0, 1);
 // IK scratch registers (leg solve)

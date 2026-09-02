@@ -50,14 +50,95 @@ const OVERRIDES = {
     revertSpin: true,
     halfT: 0.55,                      // 180 point, subclip-local
   },
-  // Indy (owner, 2026-09-02): the recording's board track never leaves the
-  // ground — broken in the air. Rebuild the air-window board FROM THE FEET
-  // (SKATE.md's own "glued to soles" doctrine for grabs): nose along the
-  // back→front foot line, deck seated under the ankles, edges blended into
-  // the valid grounded track. Nose from travel (the pop-rise test needs a
-  // moving board).
-  indy: { dropTracks: ['HandL', 'HandR'], boardFromFeet: true, noseFromTravel: true },
 };
+
+// Grabs are POSES, not clips (owner, 2026-09-02): "a grab is a pose that is
+// blended to. Sometimes we include a blend in and blend out animation. When
+// that is not there it falls back to a linear blend." The pose comes from the
+// site's Pose Studio (snapshotPose: bind-relative deltas per bone, same
+// convention as the clip tracks). File: assets/poses/<name>.json =
+//   { name, stance: 'regular'|'goofy', pose: {Bone:[x,y,z,w]},
+//     blendIn?: <clip key>, blendOut?: <clip key>, hold?: [inFrac, outFrac] }
+// stance = the capture skater's stance (which hand reaches, which leg tucks);
+// the game mirrors the pose to the player's stance with the clip recipe.
+const GRAB_FILES = {
+  indy: 'indy.json',
+};
+
+function mirrorPose(pose) {
+  const swapLR = (n) => {
+    const m = /^(.*?)([LR])$/.exec(n);
+    return m ? m[1] + (m[2] === 'L' ? 'R' : 'L') : n;
+  };
+  const out = {};
+  for (const [n, q] of Object.entries(pose)) out[swapLR(n)] = [q[0], -q[1], -q[2], q[3]];
+  return out;
+}
+
+// The board and the hips lean travel with the pose, both expressed relative
+// to the FEET FRAME so any body reproduces the authored placement:
+//   origin = midpoint of the ankles, z = back→front ankle (nose), y = the
+//   feet's own up (each foot's bind-pose up axis rotated by its current
+//   orientation, averaged, made ⟂ z — "the board rotates with the foot"),
+//   x = y × z. board = {pos, quat} in that frame (game convention: board
+//   +Z = nose). hipsLean = hips rotation relative to the board.
+// tools/pose-from-studio.mjs builds the file from a Pose Studio snapshot.
+export class Grab {
+  constructor(key, json) {
+    this.key = key;
+    this.name = json.name || key;
+    this.stance = json.stance === 'goofy' ? 'goofy' : 'regular';
+    this.blendIn = json.blendIn || null;
+    this.blendOut = json.blendOut || null;
+    this.hold = Array.isArray(json.hold) ? json.hold : [0.22, 0.72];   // fractions of the air
+    const raw = json.pose || json.bones || {};
+    const pose = {};
+    for (const [n, q] of Object.entries(raw)) {
+      const name = n.replace(/[^A-Za-z0-9_]/g, '');
+      if (name === 'Hips') continue;              // hips: lean relative to the board instead
+      if (/^Hand[LR]$/.test(name)) continue;      // wrists unkeyed (mocap import bug)
+      pose[name] = [+q[0], +q[1], +q[2], +q[3]];
+    }
+    const b = json.board || null;
+    this.variants = {
+      [this.stance]: {
+        pose,
+        boardPos: b ? b.pos.map(Number) : null,
+        boardQuat: b ? b.quat.map(Number) : null,
+        hipsLean: json.hipsLean ? json.hipsLean.map(Number) : null,
+      },
+    };
+  }
+
+  // the pose/board/lean for a given player stance (mirrored lazily: lateral
+  // flips, rotations mirror across the frame's x-plane — the clip recipe)
+  variantFor(stance) {
+    if (!this.variants[stance]) {
+      const v = this.variants[this.stance];
+      const mq = (q) => q ? [q[0], -q[1], -q[2], q[3]] : null;
+      this.variants[stance] = {
+        pose: mirrorPose(v.pose),
+        boardPos: v.boardPos ? [-v.boardPos[0], v.boardPos[1], v.boardPos[2]] : null,
+        boardQuat: mq(v.boardQuat),
+        hipsLean: mq(v.hipsLean),
+      };
+    }
+    return this.variants[stance];
+  }
+}
+
+// Missing pose files are NOT errors: a grab the owner hasn't authored yet is
+// simply not available (the trick falls back to nothing, never to a fake).
+export async function loadGrabs(onProgress) {
+  const grabs = {};
+  for (const [key, file] of Object.entries(GRAB_FILES)) {
+    onProgress?.(`grab pose: ${file}`);
+    const r = await fetch(`assets/poses/${file}`).catch(() => null);
+    if (!r || !r.ok) { console.warn(`[sk8] grab pose ${file} not found — ${key} unavailable`); continue; }
+    grabs[key] = new Grab(key, await r.json());
+  }
+  return grabs;
+}
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -707,7 +788,7 @@ export async function loadClips(skel, onProgress) {
     cruise: 'Cruise_slalom_revert.json',
     manual: 'Manual_V1.json',          // recovered from the recycle bin (2026-09-02)
     revertclip: 'Cruise_slalom_revert.json',   // subclipped to the mocapped revert
-    indy: 'Indy_pass1.json',           // grab: air-window board rebuilt from feet
+    // grabs (indy…) are poses blended over the ollie air — see loadGrabs
   };
   const clips = {};
   for (const [key, file] of Object.entries(files)) {

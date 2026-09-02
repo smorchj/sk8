@@ -7,3 +7,4 @@ assets/creator/
 node_modules/
 *.log
 
+_scratch/

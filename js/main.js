@@ -16,7 +16,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { Rig } from './rig.js';
-import { buildSkeletonInfo, loadClips } from './clips.js';
+import { buildSkeletonInfo, loadClips, loadGrabs } from './clips.js';
 import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
 import { SkateAnim } from './anim.js';
@@ -174,6 +174,7 @@ addEventListener('keydown', (e) => {
 
 // swap the active rider (initial spawn AND creator swaps go through here)
 let charCtrl = null;         // the SDK character controller (spawn handle)
+let grabs = {};              // grab POSES from the Pose Studio (assets/poses/)
 async function setCharacter(obj, ctrl) {
   if (charScene && charScene !== obj) playerRoot.remove(charScene);
   charScene = obj;
@@ -186,6 +187,7 @@ async function setCharacter(obj, ctrl) {
   if (!clips) {
     loadmsg?.('trick clips…');
     clips = await loadClips(skel, loadmsg);
+    grabs = await loadGrabs(loadmsg);
     console.log('[sk8] clip stances:',
       Object.entries(clips).map(([k, c]) =>
         `${k}: ${c.stance} (margin ${c.stanceMargin.toFixed(2)}m, raw nose ${c.noseSignRaw > 0 ? '+Z' : '-Z'} → normalized +Z)`).join('\n  '));
@@ -254,7 +256,7 @@ try {
 const physics = new SkatePhysics();
 physics.vel.set(0, 0, 2.0);
 
-anim = new SkateAnim({ rig, clips, physics, stance, skel, getSkill });
+anim = new SkateAnim({ rig, clips, physics, stance, skel, getSkill, grabs });
 
 const trickEl = document.getElementById('trickname');
 let trickFlashT = 0;
@@ -374,7 +376,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake   M manual\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip G indy\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip G indy\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
 
 function updateHUD() {
   const p = physics;
