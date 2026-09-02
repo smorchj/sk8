@@ -17,6 +17,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { Rig } from './rig.js';
 import { buildSkeletonInfo, loadClips, loadGrabs } from './clips.js';
+import { buildPark } from './park.js';
 import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
 import { SkateAnim } from './anim.js';
@@ -64,27 +65,9 @@ sun.shadow.bias = -0.0015;
 scene.add(sun);
 scene.add(sun.target);
 
-// ground — flat asphalt-ish plane for physics work; the farm comes later
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(400, 400),
-  new THREE.MeshStandardMaterial({ color: 0x6d6f6a, roughness: 0.96, metalness: 0 }),
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-const grid = new THREE.GridHelper(400, 200, 0x8a8d86, 0x7c7f78);
-grid.position.y = 0.002;
-grid.material.opacity = 0.35; grid.material.transparent = true;
-scene.add(grid);
-for (let i = -10; i <= 10; i++) {
-  const line = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.12, 400),
-    new THREE.MeshStandardMaterial({ color: 0xb8bbb2, roughness: 1 }),
-  );
-  line.rotation.x = -Math.PI / 2;
-  line.position.set(i * 8, 0.004, 0);
-  scene.add(line);
-}
+// ground + props: the rural park (js/park.js) — loaded after the loaders exist.
+// Physics still rides the flat y=0 plane; ramps are decoration until ramp
+// physics lands.
 
 function resize(w, h) {
   if (!w || !h) return;
@@ -103,6 +86,11 @@ const ktx2 = new KTX2Loader()
   .setTranscoderPath('https://unpkg.com/three@0.170.0/examples/jsm/libs/basis/')   // per sdk.md
   .detectSupport(renderer);
 loader.setKTX2Loader(ktx2);
+
+// ── the park ────────────────────────────────────────────────────────────────
+
+loadmsg('park…');
+const park = await buildPark({ scene, loader, renderer, onProgress: loadmsg });
 
 // ── player root + board ─────────────────────────────────────────────────────
 
@@ -406,6 +394,10 @@ function tick(dt) {
 
   playerRoot.position.copy(physics.pos);
   playerRoot.rotation.set(0, physics.yaw, 0);
+  // the sun's shadow frustum rides along with the player (the park is big)
+  sun.target.position.set(physics.pos.x, 0, physics.pos.z);
+  sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
+  park.update(dt);                                  // grass wind
   if (buf.board) {
     boardNode.position.fromArray(buf.board.pos);
     boardNode.quaternion.fromArray(buf.board.quat);
