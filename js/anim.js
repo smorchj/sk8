@@ -155,8 +155,12 @@ export class SkateAnim {
     }
     if (this.state !== 'ride' && this.state !== 'landing') return;
     if (!clip) { this.phys.startRevert(dir); return; }
+    // ONE capture = one spin direction per stance. Mirroring for the other
+    // direction flips the rider's STANCE with it (owner bug, 2026-09-02: "the
+    // body is wrong"), so the body always plays its stance-correct variant;
+    // a backside revert needs its own capture before Q/E can differ.
     const stanceMirror = clip.stance !== this.stance;
-    this._rev = { mirror: stanceMirror !== (dir < 0), want360: false };
+    this._rev = { mirror: stanceMirror, dir, want360: false };
     this._toState('revert');
     this.lastTrick = 'Revert';
     this.onTrick?.('Revert');
@@ -222,6 +226,20 @@ export class SkateAnim {
     if (tr && tr.grab) tr.grabHeld = false;
   }
 
+  _startAir() {
+    const clip = this.clips.ollie;
+    if (!clip || clip.tags.land == null) return;
+    const landT = clip.tags.land;
+    this.holding = false;
+    this.trick = {
+      clip, mirror: clip.stance !== this.stance, name: 'air', vy: 0,
+      t: Math.max(clip.tags.pop + 0.05, landT - 0.20),   // the catch: board under the feet
+      rate: 1, popped: true, grab: null, grabVar: null, label: 'Air',
+    };
+    this._toState('trick');
+    this._fadeDur = 0.15;
+  }
+
   _startTrick(name, strength) {
     const clip = this.clips[name];
     if (!clip || clip.tags.pop == null) { this._toState('ride'); return; }
@@ -250,6 +268,13 @@ export class SkateAnim {
     const phys = this.phys;
 
     for (const e of phys.drainEvents()) {
+      // left the ground without a trick (a lip, a ledge, the stairs): hold a
+      // compact air pose — the ollie clip just before its catch — so the
+      // landing machinery (plant, fold-in) works exactly like a trick's
+      if (e.type === 'leave' && (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'windup')) {
+        this._startAir();
+        continue;
+      }
       if (e.type === 'land' && this.state === 'trick') {
         const tr = this.trick;
         const landT = tr.clip.tags.land ?? tr.clip.duration;
@@ -392,6 +417,11 @@ export class SkateAnim {
       if (tr.popped && tr.t > landT - 0.033 && !phys.grounded) {
         tr.t = landT - 0.033;             // hold the catch until physics touches down
       }
+      if (tr.name === 'air' && phys.grounded && tr.t > landT - 0.04) {
+        // an air pose but already on the ground with no land event (a snap
+        // onto a lower surface): land it now
+        phys.events.push({ type: 'land', airTime: 0 });
+      }
       tr.clip.sample(tr.t, tr.mirror, pose);
       if (!tr.popped && pose.board) {     // wind-in: board glued to the ground
         pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y);
@@ -510,7 +540,7 @@ export class SkateAnim {
     tr.grabT += dt;
     if (!tr.grabHeld) tr.grabRelT += dt;
     const phys = this.phys;
-    const vy = phys.vel.y, y = Math.max(0, phys.pos.y);
+    const vy = phys.vel.y, y = phys.heightAboveGround();
     const remain = (vy + Math.sqrt(vy * vy + 2 * G * y)) / G;     // s until touchdown
     const ss = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
     const w = ss(tr.grabT / GRAB_IN) * ss(1 - tr.grabRelT / GRAB_OUT) * ss(remain / GRAB_LAND);

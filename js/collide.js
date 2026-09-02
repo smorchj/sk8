@@ -1,0 +1,59 @@
+// collide.js — the static collision world: every park mesh (terrain, stairs,
+// props) gets a BVH and the skate physics raycasts against it. Mesh
+// collision, not proxies (owner, 2026-09-02: "they need to basically have
+// mesh collision").
+
+import * as THREE from 'three';
+import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
+
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
+const _m3 = new THREE.Matrix3();
+
+export class CollisionWorld {
+  constructor() {
+    this.meshes = [];
+    this.ray = new THREE.Raycaster();
+    this.ray.firstHitOnly = true;
+    this._hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, object: null };
+  }
+
+  // register every mesh under `root` (world matrices must be final)
+  add(root, tag = root.name || 'mesh') {
+    root.updateWorldMatrix(true, true);
+    root.traverse(o => {
+      if (!o.isMesh || !o.geometry) return;
+      if (!o.geometry.boundsTree) o.geometry.boundsTree = new MeshBVH(o.geometry);
+      o.userData.collider = tag;
+      this.meshes.push(o);
+    });
+  }
+
+  // nearest surface along a ray; the normal is flipped to face the ray
+  // origin so callers always get the side they are on. Returns null if none.
+  cast(origin, dir, far) {
+    this.ray.set(origin, dir);
+    this.ray.far = far;
+    this.ray.near = 0;
+    const hits = this.ray.intersectObjects(this.meshes, false);
+    if (!hits.length) return null;
+    const h = hits[0];
+    const out = this._hit;
+    out.point.copy(h.point);
+    out.normal.copy(h.face.normal).applyNormalMatrix(_m3.getNormalMatrix(h.object.matrixWorld)).normalize();
+    out.backface = out.normal.dot(dir) > 0;      // we hit it from behind = we are inside
+    if (out.backface) out.normal.negate();
+    out.distance = h.distance;
+    out.object = h.object;
+    return out;
+  }
+
+  // is this point inside a closed mesh? (the first face straight above it is
+  // seen from behind)
+  inside(point, up = 3) {
+    const h = this.cast(point, UP, up);
+    return !!(h && h.backface);
+  }
+}
+
+const UP = new THREE.Vector3(0, 1, 0);

@@ -241,8 +241,12 @@ try {
 
 // ── game objects ────────────────────────────────────────────────────────────
 
-const physics = new SkatePhysics();
+// the rider starts on the street slab, rolling toward the stairs and the pad
+const START = { x: 0, z: -16, yaw: 0 };
+const physics = new SkatePhysics(park.world);
+physics.pos.set(START.x, 0, START.z);
 physics.vel.set(0, 0, 2.0);
+const _rootQ = new THREE.Quaternion();
 
 anim = new SkateAnim({ rig, clips, physics, stance, skel, getSkill, grabs });
 
@@ -269,7 +273,10 @@ const input = new Input({
   brake: (on) => { physics.braking = on; },
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },
   toggleSlow: () => { slowmo = !slowmo; },
-  reset: () => { physics.pos.set(0, 0, 0); physics.vel.set(0, 0, 2); physics.yaw = 0; physics.rollSign = 1; },
+  reset: () => {
+    physics.pos.set(START.x, 0, START.z); physics.vel.set(0, 0, 2); physics.yaw = START.yaw;
+    physics.rollSign = 1; physics.up.set(0, 1, 0); physics.grounded = true;
+  },
   // free-look: mouse movement while UNCLICKED orbits the chase cam; a held
   // wind-up freezes the camera (owner's spec) — input.js gates this already.
   look: (dx, dy) => {
@@ -393,7 +400,7 @@ function tick(dt) {
   const buf = anim.update(dt, input.steer);
 
   playerRoot.position.copy(physics.pos);
-  playerRoot.rotation.set(0, physics.yaw, 0);
+  playerRoot.quaternion.copy(physics.rootQuat(_rootQ));   // nose along the surface, up = its normal
   // the sun's shadow frustum rides along with the player (the park is big)
   sun.target.position.set(physics.pos.x, 0, physics.pos.z);
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
@@ -441,11 +448,11 @@ window.SK8 = {
     inspect = on;
     if (on) {
       physics.vel.set(0, 0, 0);
-      physics.pos.set(0, 0, 0);
-      physics.yaw = 0;
+      physics.pos.set(START.x, 0, START.z);
+      physics.yaw = START.yaw;
       freecam = true; controls.enabled = true;
-      camera.position.set(dist, height, 0);
-      controls.target.set(0, 0.9, 0);
+      camera.position.set(START.x + dist, height, START.z);
+      controls.target.set(START.x, 0.9, START.z);
     } else {
       freecam = false; controls.enabled = false;
       physics.vel.set(0, 0, 2);

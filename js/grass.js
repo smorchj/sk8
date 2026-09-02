@@ -43,7 +43,7 @@ function crossedCards(w, h) {
   return g;
 }
 
-export async function buildGrass({ renderer, exclude, radius = 90, seed = 7 }) {
+export async function buildGrass({ renderer, exclude, heightAt = () => 0, radius = 90, seed = 7 }) {
   const group = new THREE.Group();
   group.name = 'grass';
   const texLoader = new THREE.TextureLoader();
@@ -93,8 +93,9 @@ export async function buildGrass({ renderer, exclude, radius = 90, seed = 7 }) {
     while (placed < cfg.count && tries < cfg.count * 25) {
       tries++;
       const a = rand() * Math.PI * 2, r = Math.sqrt(rand()) * radius;
-      p.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+      p.set(Math.cos(a) * r, 0, Math.sin(a) * r + 8);
       if (exclude(p.x, p.z)) continue;
+      p.y = heightAt(p.x, p.z) - 0.02;
       q.setFromAxisAngle(UP, rand() * Math.PI);
       const sc = 0.7 + rand() * 0.6;
       s.set(sc, sc * (0.85 + rand() * 0.3), sc);

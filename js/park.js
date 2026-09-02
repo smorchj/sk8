@@ -1,59 +1,53 @@
 // park.js — the rural "Skate Barn" park (owner's reference render, 2026-09-02):
-// a cracked concrete plaza in a meadow, an asphalt lot behind it, and the
-// owner's Meshy props placed around it. Tileable ground textures + normal
-// maps are the owner's (Gemini), models are Meshy exports optimized by
-// tools/park-models.mjs, grass cards by js/grass.js.
+// a raised concrete pad with a staircase down to the street slab, a grass
+// bank between the levels, an asphalt lot behind, and the owner's Meshy props
+// placed around it. Ground = js/terrain.js (one mesh, blended shader), grass
+// cards = js/grass.js, collision = js/collide.js (every mesh, BVH).
 //
 // The mini-ramp GLBs share one mesh: ramp.glb is loaded ONCE and each
 // placement swaps the base-color map (ramp_tex/v1..7) on a cloned material.
-//
-// Collision/riding on ramps is NOT here yet — the physics ground is still
-// the flat plane; the props are decoration until ramp/grind physics lands.
 
 import * as THREE from 'three';
 import { buildGrass } from './grass.js';
+import { CollisionWorld } from './collide.js';
+import { makeTerrain, makeStairs, heightAt, pavedMask, TILE } from './terrain.js';
 
 const T = 'assets/park/textures/';
 const M = 'assets/park/';
 
-// physical size (m) one texture tile covers — tuned by eye against the rider
-const TILE = { grass: [5.2, 2.84], concrete: [8.8, 4.8], asphalt: [3.2, 1.75] };
-
-// plaza / lot / path footprints (also keep grass cards out)
-const PLAZA = { w: 36, d: 28, x: 0, z: 0 };
-const LOT = { w: 60, d: 24, x: 0, z: 28 };
-const PATH = { w: 4, d: 14, x: 0, z: 21 };
-
 // placements: [model, x, z, rotY(deg), scale, variant]
+// (the quarter-pipe model's transition faces its local +X — measured with
+// height probes, 2026-09-02; rotY 90 turns it to face −Z)
 const LAYOUT = [
-  // quarter pipes along the far edge, faces toward the plaza
-  ['ramp', -9, 13, 180, 2.6, 1],
-  ['ramp', -3, 13, 180, 2.6, 2],
-  ['ramp', 3, 13, 180, 2.6, 3],
-  ['ramp', 9, 13, 180, 2.6, 4],
-  // banks on the sides
-  ['ramp', -16, -4, 90, 2.6, 5],
-  ['ramp', -16, 4, 90, 2.6, 6],
-  ['ramp', 16, -4, -90, 2.6, 7],
-  ['ramp2', 16, 5, -90, 3.0],
-  // the big concrete ramp, rail, bridge, table
-  ['ramp_haven', 0, -13, 0, 4.0],
-  ['grind_rail', 5, -3, 0, 1.8],
-  ['curve_bridge', -7, -7, 0, 3.0],
-  ['picnic_table', 19, -13, 30, 1.0],
+  // quarter pipes behind the pad, faces toward it (−Z)
+  ['ramp', -13, 17.5, 90, 2.6, 1],
+  ['ramp', -7, 17.5, 90, 2.6, 2],
+  ['ramp', 7, 17.5, 90, 2.6, 3],
+  ['ramp', 13, 17.5, 90, 2.6, 4],
+  // quarter pipes on the pad's sides, facing in (+X on the left, −X on the right)
+  ['ramp', -19.5, 4, 0, 2.6, 5],
+  ['ramp', -19.5, 12, 0, 2.6, 6],
+  ['ramp', 19.5, 4, 180, 2.6, 7],
+  ['ramp', 19.5, 12, 180, 2.6, 2],
+  // the halfpipe on the upper grass (owner: it was far too small)
+  ['ramp2', 32, 8, 90, 6.0],
+  // street level: the concrete hip, the rail, the curve bridge
+  ['ramp_haven', 0, -27, 0, 4.0],
+  ['grind_rail', 7, -14, 0, 1.8],
+  ['curve_bridge', -9, -21, 0, 3.0],
+  // the picnic table on the upper grass
+  ['picnic_table', -27, 10, 30, 1.0],
 ];
-
-const inRect = (r, x, z, pad = 0) => Math.abs(x - r.x) < r.w / 2 + pad && Math.abs(z - r.z) < r.d / 2 + pad;
 
 export async function buildPark({ scene, loader, renderer, onProgress }) {
   const group = new THREE.Group();
   group.name = 'park';
+  const world = new CollisionWorld();
   const aniso = renderer.capabilities.getMaxAnisotropy();
   const texLoader = new THREE.TextureLoader();
-  const tile = async (file, name, w, h, srgb) => {
+  const tex = async (file, srgb) => {
     const t = await texLoader.loadAsync(T + file + '.jpg');
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(w / TILE[name][0], h / TILE[name][1]);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = aniso;
     return t;
@@ -75,46 +69,23 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   scene.background = horizon.clone();
   scene.fog = new THREE.Fog(horizon.clone(), 70, 220);
 
-  // ── ground: meadow everywhere, concrete plaza, asphalt lot, path ──────────
+  // ── ground: one terrain mesh, two levels, blended shader; the stairs ──────
   onProgress?.('park: ground');
-  const plane = (w, h, mat, y) => {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.y = y;
-    m.receiveShadow = true;
-    return m;
+  const groundTex = {
+    grass: await tex('grass', true), grassN: await tex('grass_soft_n', false),
+    concrete: await tex('concrete', true), concreteN: await tex('concrete_n', false),
+    asphalt: await tex('asphalt', true), asphaltN: await tex('asphalt_n', false),
   };
-  // owner's grass normals: 'grass_soft_n' (default) or 'grass_detail_n'
-  const meadowMat = new THREE.MeshStandardMaterial({
-    map: await tile('grass', 'grass', 400, 400, true),
-    normalMap: await tile('grass_soft_n', 'grass', 400, 400, false),
-    roughness: 1, metalness: 0, color: 0xe6e9df,
+  const terrain = makeTerrain(groundTex);
+  group.add(terrain);
+  const stairMat = new THREE.MeshStandardMaterial({
+    map: groundTex.concrete.clone(), normalMap: groundTex.concreteN.clone(), roughness: 0.9, metalness: 0, color: 0xc9c8c0,
   });
-  meadowMat.normalScale.set(0.6, 0.6);
-  const meadow = plane(400, 400, meadowMat, 0);
-  const concreteMat = (w, h) => new THREE.MeshStandardMaterial({
-    map: null, normalMap: null, roughness: 0.9, metalness: 0, color: 0xc3c2bb,
-  });
-  const plazaMat = concreteMat();
-  plazaMat.map = await tile('concrete', 'concrete', PLAZA.w, PLAZA.d, true);
-  plazaMat.normalMap = await tile('concrete_n', 'concrete', PLAZA.w, PLAZA.d, false);
-  plazaMat.normalScale.set(0.7, 0.7);
-  const plaza = plane(PLAZA.w, PLAZA.d, plazaMat, 0.004);
-  const lotMat = new THREE.MeshStandardMaterial({
-    map: await tile('asphalt', 'asphalt', LOT.w, LOT.d, true),
-    normalMap: await tile('asphalt_n', 'asphalt', LOT.w, LOT.d, false),
-    roughness: 0.95, metalness: 0,
-  });
-  lotMat.normalScale.set(0.5, 0.5);
-  const lot = plane(LOT.w, LOT.d, lotMat, 0.003);
-  lot.position.z = LOT.z;
-  const pathMat = concreteMat();
-  pathMat.map = await tile('concrete', 'concrete', PATH.w, PATH.d, true);
-  pathMat.normalMap = await tile('concrete_n', 'concrete', PATH.w, PATH.d, false);
-  pathMat.normalScale.set(0.7, 0.7);
-  const path = plane(PATH.w, PATH.d, pathMat, 0.0035);
-  path.position.z = PATH.z;
-  group.add(meadow, plaza, lot, path);
+  stairMat.map.repeat.set(4.8 / TILE.concrete[0], 1.6 / TILE.concrete[1]);
+  stairMat.normalMap.repeat.copy(stairMat.map.repeat);
+  stairMat.map.needsUpdate = stairMat.normalMap.needsUpdate = true;
+  const stairs = makeStairs(stairMat);
+  group.add(stairs);
 
   // ── models ────────────────────────────────────────────────────────────────
   const names = [...new Set(LAYOUT.map(p => p[0]))];
@@ -150,24 +121,46 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     obj.scale.setScalar(scale);
     obj.rotation.y = THREE.MathUtils.degToRad(rotDeg);
     obj.updateMatrixWorld(true);
-    box.setFromObject(obj);                     // sit on the ground
-    obj.position.set(x, -box.min.y, z);
+    box.setFromObject(obj);                     // sit on the terrain
+    obj.position.set(x, heightAt(x, z) - box.min.y - 0.01, z);
     obj.updateMatrixWorld(true);
     box.setFromObject(obj);
-    footprints.push({ x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2, w: box.max.x - box.min.x, d: box.max.z - box.min.z });
+    footprints.push({ x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2, hw: (box.max.x - box.min.x) / 2, hd: (box.max.z - box.min.z) / 2 });
     obj.userData.park = { name, variant: variant || null };
     group.add(obj);
     props.push(obj);
   }
 
+  // ── collision: terrain, stairs, every prop (mesh collision, BVH) ──────────
+  // The Meshy ramps are OPEN SHELLS at the back (owner got stuck inside one):
+  // seal them with invisible boxes under the decks so the backs are walls.
+  const sealMat = new THREE.MeshBasicMaterial({ visible: false });
+  const SEALS = {
+    ramp: [{ x: [-0.5, -0.12], y: [-0.29, 0.27], z: [-0.5, 0.5] }],       // deck side is local −X
+    ramp2: [{ x: [-0.5, -0.34], y: [-0.2, 0.18], z: [-0.39, 0.39] }, { x: [0.34, 0.5], y: [-0.2, 0.18], z: [-0.39, 0.39] }],
+  };
+  for (const p of props) {
+    for (const s of SEALS[p.userData.park.name] || []) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);
+      b.position.set((s.x[0] + s.x[1]) / 2, (s.y[0] + s.y[1]) / 2, (s.z[0] + s.z[1]) / 2);
+      b.name = 'seal';
+      p.add(b);                                 // inherits the prop's scale/rotation
+    }
+  }
+  onProgress?.('park: collision');
+  scene.add(group);                             // world matrices need the scene
+  group.updateWorldMatrix(true, true);
+  world.add(terrain, 'terrain');
+  world.add(stairs, 'stairs');
+  for (const p of props) world.add(p, p.userData.park.name);
+
   // ── grass cards on the meadow ─────────────────────────────────────────────
   onProgress?.('park: grass');
   const exclude = (x, z) =>
-    inRect(PLAZA, x, z, -0.4) || inRect(LOT, x, z, -0.3) || inRect(PATH, x, z, -0.2) ||
-    footprints.some(f => inRect(f, x, z, 0.3));
-  const grass = await buildGrass({ renderer, exclude, radius: 95 });
+    pavedMask(x, z) > 0.45 ||
+    footprints.some(f => Math.abs(x - f.x) < f.hw + 0.3 && Math.abs(z - f.z) < f.hd + 0.3);
+  const grass = await buildGrass({ renderer, exclude, heightAt, radius: 95 });
   group.add(grass.group);
 
-  scene.add(group);
-  return { group, props, base, update: (dt) => grass.update(dt) };
+  return { group, props, base, world, terrain, update: (dt) => grass.update(dt) };
 }
