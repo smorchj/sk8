@@ -50,6 +50,7 @@ const GRIND_SNAP = 0.28;       // m — how close (horizontally) the board must 
 const GRIND_DRAG = 1.1;        // m/s² — grinding scrubs speed
 const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall off
 const GRIND_LIFT = { '5050': 0.055, boardslide: 0.125 };   // root below the edge: trucks / deck on it
+const GRIND_RECATCH = 0.45;    // s after leaving an edge before the same edge can catch again
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -161,8 +162,12 @@ export class SkatePhysics {
   _findEdge() {
     let best = null, bestD = GRIND_SNAP;
     for (const e of this.edges) {
+      if (e === this._lastEdge && this.airTime < GRIND_RECATCH) continue;   // just left it
       _x.subVectors(this.pos, e.a);
-      const t = Math.min(e.len, Math.max(0, _x.dot(e.dir)));
+      const raw = _x.dot(e.dir);
+      const along = this.vel.dot(e.dir);
+      if ((raw > e.len && along > 0) || (raw < 0 && along < 0)) continue;   // past an end, moving away
+      const t = Math.min(e.len, Math.max(0, raw));
       _o.copy(e.a).addScaledVector(e.dir, t);           // nearest point on the edge
       const dh = this.pos.y - _o.y;
       if (dh < -0.08 || dh > 0.34) continue;             // board must be at/above the edge
@@ -216,6 +221,7 @@ export class SkatePhysics {
     const g = this.grind;
     if (!g) return;
     this.grind = null;
+    this._lastEdge = g.edge;                             // no re-catching its end point
     this.vel.copy(g.edge.dir).multiplyScalar(g.s * g.v);
     this.events.push({ type: 'grindEnd', kind: g.kind, reason });
   }
