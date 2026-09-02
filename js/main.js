@@ -322,10 +322,24 @@ function updateCamera(dt) {
   // revert skids) the board whirls while momentum doesn't, and the camera
   // must ride the momentum (owner: 180s were jarring). rollSign flips on
   // landing keep travelDir aligned with velocity, so there is no snap.
-  if (physics.speed() > 0.5) {
-    _travel.set(physics.vel.x, 0, physics.vel.z).normalize();
-  } else {
-    physics.travelDir(_travel);
+  // The chase heading (and the chest side) only turn ON THE GROUND (owner,
+  // 2026-09-03: "the camera should not turn while in air" — off a quarter
+  // pipe the velocity reverses mid-air and the camera swung round, losing the
+  // rider); frozen from leave to touchdown, then it turns at a limited rate,
+  // orbiting round the rider instead of lerping the camera through them
+  if (physics.grounded) {
+    if (physics.speed() > 0.5) {
+      _travel.set(physics.vel.x, 0, physics.vel.z).normalize();
+    } else {
+      physics.travelDir(_travel);
+    }
+    let dy = Math.atan2(_travel.x, _travel.z) - chaseYaw;
+    while (dy > Math.PI) dy -= 2 * Math.PI;
+    while (dy < -Math.PI) dy += 2 * Math.PI;
+    chaseYaw += dy * (1 - Math.exp(-dt * 6));
+    // chest side relative to travel: regular nose-first = right; flips with
+    // stance and with fakie — and it's travel-based, so air spins don't swing it
+    chaseSide = (stance === 'regular' ? -1 : 1) * physics.rollSign;
   }
   // free-look relaxes back to the chase view — but NEVER while winding up:
   // the camera must hold still from click to release (owner's spec)
@@ -334,15 +348,13 @@ function updateCamera(dt) {
     lookYaw *= relax;
     lookPitch *= relax;
   }
-  _lookDir.copy(_travel).applyAxisAngle(_up, lookYaw);
+  _lookDir.set(Math.sin(chaseYaw + lookYaw), 0, Math.cos(chaseYaw + lookYaw));
 
   // Skate-style framing (owner, 2026-09-02): sit a bit OFF to the rider's
   // chest side (3/4 view instead of a static tail-cam), lead the look ahead
   // of the motion, breathe with speed, and roll gently with the carve.
   const sp = physics.speed();
-  // chest side relative to travel: regular nose-first = right; flips with
-  // stance and with fakie — and it's travel-based, so air spins don't swing it
-  const sideSign = (stance === 'regular' ? -1 : 1) * physics.rollSign;
+  const sideSign = chaseSide;
   _sideDir.set(_lookDir.z, 0, -_lookDir.x);              // right of travel
   const dist = 3.1 + sp * 0.11;
   const want = new THREE.Vector3().copy(physics.pos)
@@ -367,6 +379,7 @@ function updateCamera(dt) {
   }
 }
 const _lookDir = new THREE.Vector3();
+let chaseYaw = 0, chaseSide = 1;          // the chase heading / chest side, frozen in the air
 const _sideDir = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 let camRoll = 0;
@@ -375,9 +388,18 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug';
+
+// the debug readout is off by default (owner, 2026-09-03); F3 or SK8.hud() shows it
+function showHUD(on = !document.body.classList.contains('debug')) {
+  document.body.classList.toggle('debug', on);
+}
+addEventListener('keydown', (e) => {
+  if (e.code === 'F3') { e.preventDefault(); if (!e.repeat) showHUD(); }
+});
 
 function updateHUD() {
+  if (!document.body.classList.contains('debug')) return;
   const p = physics;
   const tr = anim.trick;
   hud.textContent =
@@ -446,6 +468,7 @@ let inspect = false;
 window.SK8 = {
   physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill, park, editor,
   pause(on = true) { paused = on; },
+  hud(on = true) { showHUD(on); },
   get anim() { return anim; },
   get rig() { return rig; },
   get clips() { return clips; },

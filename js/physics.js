@@ -57,8 +57,19 @@ const GRIND_DRAG = 1.1;        // m/s² — grinding scrubs speed
 const GRIND_MIN_V = 1.0;       // m/s — slower than half this and you stall off
 const GRIND_MIN_ALONG = 0.8;   // m/s — travel along the edge needed to catch it at all
 const GRIND_INSIDE = 0.12;     // m — how far inside a ledge's top the board may be and still catch its edge
-const GRIND_LIFT = { '5050': 0.055, boardslide: 0.125 };   // root below the edge: trucks / deck on it
+const GRIND_TURN = 10;         // 1/s — how fast the board heading follows a chained bend
+// the board's contact geometry, measured on assets/skateboard.glb (board
+// frame, the root sits at the wheels' bottom): the truck hangers' underside
+// 0.022 up, the deck's underside 0.094 up, axles at z +0.208 / −0.278, wheels
+// out to |x| 0.114. What rests on an edge comes from these, not a tuned gap
+// (owner, 2026-09-03: "the 50-50 does not always hit the trucks", "the board
+// slide often has the actual board go through")
+const BOARD = { hanger: 0.022, deck: 0.094, axleF: 0.208, axleB: 0.278, wheelX: 0.114 };
+const SLIDE_IN = 0.05;         // m — a ledge slide's deck contact sits this far in from the board's centre
 const GRIND_RECATCH = 0.45;    // s after leaving an edge before the same edge can catch again
+// only the quarter pipes and the halfpipe are transitions (steep faces you
+// ride, land on, and pop vert from); the hip is banks, ledges and walls
+const TRANSITION = /^ramp2?$/;
 const GRIND_IGNORE = 0.3;      // s after leaving a rail during which its prop doesn't collide
 const GRIND_EXIT_OUT = 0.3;    // m — how far a ledge exit steps toward the ledge's open side
 
@@ -67,6 +78,7 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 const _n = new THREE.Vector3(), _f = new THREE.Vector3(), _g = new THREE.Vector3();
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _x = new THREE.Vector3();
 const _lat = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _dn = new THREE.Vector3();
+const _eu = new THREE.Vector3();
 const _qs = new THREE.Quaternion();
 
 export class SkatePhysics {
@@ -145,7 +157,7 @@ export class SkatePhysics {
     if (!this.grounded) { this.vel.y += vy; return; }
     // (on a transition collider any real slope launches vert; a halfpipe's
     // flat bottom has no horizontal normal and pops like flat ground)
-    const onRamp = /^ramp/.test(this.surface || '');
+    const onRamp = TRANSITION.test(this.surface || '');
     const horiz = Math.hypot(this.up.x, this.up.z);
     if (this.up.y < 0.6 || (onRamp && (horiz > 0.12 || this.surfaceFace))) {
       // popping ON a transition: a vert air with extra height — the momentum
@@ -231,7 +243,8 @@ export class SkatePhysics {
     while (yaw - this.yaw > Math.PI) yaw -= 2 * Math.PI;
     while (yaw - this.yaw < -Math.PI) yaw += 2 * Math.PI;
     this.yaw = yaw;
-    this.grind = { edge, t, s, v: Math.max(Math.abs(along), GRIND_MIN_V), kind };
+    // the board's heading relative to the edge (kept through chained bends)
+    this.grind = { edge, t, s, v: Math.max(Math.abs(along), GRIND_MIN_V), kind, yawOff: yaw - edgeYaw };
     this.grounded = true;
     this.vert = null;
     this.up.set(0, 1, 0);
@@ -240,13 +253,46 @@ export class SkatePhysics {
     this.events.push({ type: 'grind', kind, name: edge.name, airTime: this.airTime });
   }
 
-  _placeOnEdge() {
-    const g = this.grind;
-    this.pos.copy(g.edge.a).addScaledVector(g.edge.dir, g.t);
-    this.pos.y -= GRIND_LIFT[g.kind];                    // trucks / deck on the edge, not the wheels
-    this.vel.copy(g.edge.dir).multiplyScalar(g.s * g.v);
+  _placeOnEdge(dt = 0) {
+    const g = this.grind, e = g.edge, d = e.dir;
+    if (dt > 0) {                                        // ease the heading round a bend
+      const target = Math.atan2(d.x, d.z) + g.yawOff;
+      let dy = target - this.yaw;
+      while (dy > Math.PI) dy -= 2 * Math.PI;
+      while (dy < -Math.PI) dy += 2 * Math.PI;
+      this.yaw += dy * Math.min(1, dt * GRIND_TURN);
+    }
+    // the board's plane holds the edge line (along it in a 50-50, across it
+    // in a slide), so a sloped edge pitches/rolls the board with it (owner:
+    // "the board's angle needs to follow the ledge"): up = the most vertical
+    // direction perpendicular to the edge
+    _eu.copy(WORLD_UP).addScaledVector(d, -WORLD_UP.dot(d)).normalize();
+    // what rests on the edge: a 50-50 hangs the truck hangers on it, a slide
+    // the deck's underside. On a LEDGE (a solid top beside the edge) the
+    // board also tips toward the open side so the inner wheels sit on the
+    // top instead of inside it — a 50-50 rolls out until they clear, a slide
+    // pitches about the corner with the outer end hanging (the locked-in look)
+    let lift, tilt = 0, inward = 0;
+    if (g.kind === '5050') {
+      lift = BOARD.hanger;
+      if (e.open) tilt = Math.atan(BOARD.hanger / BOARD.wheelX);
+    } else {
+      lift = BOARD.deck;
+      if (e.open) {
+        inward = SLIDE_IN;
+        const noseIn = this.noseDir(_f).dot(e.open) < 0;   // which truck is over the top
+        tilt = Math.atan(BOARD.deck / ((noseIn ? BOARD.axleF : BOARD.axleB) + inward));
+      }
+    }
+    this.up.copy(_eu);
+    if (tilt) this.up.multiplyScalar(Math.cos(tilt)).addScaledVector(e.open, Math.sin(tilt)).normalize();
+    this._surfaceForward();
+    this.pos.copy(e.a).addScaledVector(d, g.t);
+    if (inward) this.pos.addScaledVector(_o.copy(e.open).multiplyScalar(-Math.cos(tilt)).addScaledVector(_eu, Math.sin(tilt)), inward);
+    this.pos.addScaledVector(this.up, -lift);
+    this.vel.copy(d).multiplyScalar(g.s * g.v);
     this.groundY = this.pos.y;
-    this.surface = g.edge.name;
+    this.surface = e.name;
   }
 
   _endGrind(reason) {
@@ -287,6 +333,9 @@ export class SkatePhysics {
       return;
     }
     g.t += g.s * g.v * dt;
+    // a chained bend: flow onto the next/previous segment without leaving
+    while (g.t > g.edge.len && g.edge.next) { g.t -= g.edge.len; g.edge = g.edge.next; this.surface = g.edge.name; }
+    while (g.t < 0 && g.edge.prev) { g.edge = g.edge.prev; g.t += g.edge.len; this.surface = g.edge.name; }
     if (g.t < 0 || g.t > g.edge.len) {                   // off the end
       g.t = Math.min(g.edge.len, Math.max(0, g.t));
       this._placeOnEdge();
@@ -294,7 +343,7 @@ export class SkatePhysics {
       this._leave();
       return;
     }
-    this._placeOnEdge();
+    this._placeOnEdge(dt);
     this._surfaceForward();
   }
 
@@ -402,7 +451,7 @@ export class SkatePhysics {
       // tilt the rider steeply; on a bench, a rail, a table the ground is a
       // near-level top — never a slat's side or a bevel (owner: the rider
       // ended up lying on the curved bench)
-      const steepOK = hit && /^ramp/.test(hit.object.userData.collider || '');
+      const steepOK = hit && TRANSITION.test(hit.object.userData.collider || '');
       const minY = steepOK ? -1 : 0.5;
       if (hit && !hit.backface && (hit.normal.dot(up) < 0.45 || hit.normal.y < minY)) {
         // the probe found a face far from our current tilt (a wall next to a
@@ -529,7 +578,7 @@ export class SkatePhysics {
         _o.copy(this.pos).addScaledVector(WORLD_UP, 0.06);
         _d.copy(vel).multiplyScalar(1 / spd);
         const ahead = this.world.cast(_o, _d, spd * LAND_LOOKAHEAD + 0.15);
-        const aheadMinY = /^ramp/.test(ahead?.object.userData.collider || '') ? 0.05 : 0.5;
+        const aheadMinY = TRANSITION.test(ahead?.object.userData.collider || '') ? 0.05 : 0.5;
         if (ahead && ahead.normal.y > aheadMinY && vel.dot(ahead.normal) < 0) {
           const tta = ahead.distance / spd;                      // s to impact
           if (tta < LAND_LOOKAHEAD) {
@@ -599,7 +648,7 @@ export class SkatePhysics {
       // lying on a wall)
       // (steep faces are landings only on transition colliders — a rail's
       // brace or a ledge's wall is not; owner: "rides sideways in strange places")
-      const transition = hit && /^ramp/.test(hit.object.userData.collider || '');
+      const transition = hit && TRANSITION.test(hit.object.userData.collider || '');
       const rideable = hit && (hit.normal.y > ((this.vert || transition) ? 0.05 : 0.5));
       if (hit && vel.dot(hit.normal) < 0 && !rideable) {
         vel.addScaledVector(hit.normal, -vel.dot(hit.normal) * 1.02);

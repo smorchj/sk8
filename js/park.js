@@ -50,19 +50,11 @@ export const DEFAULT_LAYOUT = [
 // grindable edges per model, in the model's local space (probed on the
 // meshes). Copings are deliberately NOT here (owner: lip tricks come from
 // animation).
-// a polyline (curved tops) → consecutive ledge segments; grinds hand off
-const poly = (pts) => pts.slice(1).map((p, i) => [pts[i], p, 'ledge']);
-// the two edges of a strip of half-width w around a centreline (local XZ)
-const polySides = (pts, w) => {
-  const perp = (a, b) => { const dx = b[0] - a[0], dz = b[2] - a[2], l = Math.hypot(dx, dz) || 1; return [-dz / l, dx / l]; };
-  const sides = [[], []];
-  pts.forEach((p, i) => {
-    const p0 = perp(pts[Math.max(0, i - 1)], pts[Math.min(pts.length - 1, i + 1)]);
-    sides[0].push([p[0] + p0[0] * w, p[1], p[2] + p0[1] * w]);
-    sides[1].push([p[0] - p0[0] * w, p[1], p[2] - p0[1] * w]);
-  });
-  return [...poly(sides[0]), ...poly(sides[1])];
-};
+// a polyline (curved tops) → consecutive ledge segments that share a CHAIN
+// id: a grind flows from one to the next without leaving (the heading eases
+// round the bend — owner: "the curved bench jagged grinds")
+let chainSeq = 0;
+const poly = (pts, chain = 'c' + (chainSeq++)) => pts.slice(1).map((p, i) => [pts[i], p, 'ledge', chain]);
 const EDGES = {
   grind_rail: [[[-0.86, 0.154, 0], [0.86, 0.154, 0], 'rail']],
   // the picnic table (owner: "two types of benches, none grindable"): both
@@ -74,20 +66,31 @@ const EDGES = {
     [[-0.92, 0.28, -0.32], [0.92, 0.28, -0.32], 'ledge'],
     [[-0.92, 0.28, 0.32], [0.92, 0.28, 0.32], 'ledge'],
   ],
-  // the curved bench (0.72 m up): grinds on its two OUTER edges, the middle
-  // of the top rides (owner, 2026-09-03). Centreline traced by probes, the
-  // edges are the centreline offset by the top's half-width.
-  curve_bridge: polySides([
-    [-0.88, 0.12, -0.72], [-0.5, 0.12, -0.62], [-0.2, 0.12, -0.48], [0.05, 0.12, -0.32],
-    [0.22, 0.12, -0.15], [0.35, 0.12, 0.0], [0.45, 0.12, 0.15], [0.55, 0.12, 0.35],
-    [0.65, 0.12, 0.55], [0.75, 0.12, 0.8],
-  ], 0.14),
+  // the curved bench (0.70 m up): grinds on its two OUTER edges, the middle
+  // of the top rides (owner, 2026-09-03). Both corner lines traced on the
+  // collision mesh 2026-09-03 (cross-scans at ten stations; the top is
+  // ~0.9 m wide and the old centreline sat up to 0.12 m off it).
+  curve_bridge: [
+    ...poly([
+      [-0.904, 0.118, -0.628], [-0.545, 0.118, -0.491], [-0.27, 0.118, -0.351], [-0.041, 0.118, -0.205],
+      [0.125, 0.118, -0.061], [0.243, 0.118, 0.082], [0.34, 0.118, 0.213], [0.447, 0.118, 0.401],
+      [0.531, 0.118, 0.603], [0.611, 0.118, 0.856],
+    ]),
+    ...poly([
+      [-0.452, 0.118, -0.755], [-0.134, 0.118, -0.601], [0.145, 0.118, -0.441], [0.346, 0.118, -0.269],
+      [0.492, 0.118, -0.109], [0.611, 0.118, 0.058], [0.727, 0.118, 0.261], [0.825, 0.118, 0.472],
+      [0.922, 0.118, 0.731],
+    ]),
+  ],
+  // (corners re-probed 2026-09-03 with the board's real contact geometry: the
+  // rim's corner is at local z −0.278 and its bank crest is a straight line
+  // that reaches the top at |x| 0.33, not 0.3 — the old line sagged 7 cm)
   ramp_haven: [
-    [[-0.55, -0.06, 0.41], [0.55, -0.06, 0.41], 'ledge'],    // front ledge
-    [[-0.3, 0.10, 0.17], [0.3, 0.10, 0.17], 'ledge'],        // the plateau's front edge
-    [[-0.92, -0.059, -0.27], [-0.3, 0.241, -0.27], 'ledge'], // the back rim: slope, level, slope
-    [[-0.3, 0.241, -0.27], [0.3, 0.241, -0.27], 'ledge'],
-    [[0.3, 0.241, -0.27], [0.92, -0.059, -0.27], 'ledge'],
+    [[-0.55, -0.062, 0.413], [0.55, -0.062, 0.413], 'ledge'],   // front ledge
+    [[-0.3, 0.093, 0.163], [0.3, 0.093, 0.163], 'ledge'],       // the plateau's front edge
+    [[-0.92, -0.059, -0.278], [-0.33, 0.241, -0.278], 'ledge', 'rim'], // the back rim: slope, level, slope
+    [[-0.33, 0.241, -0.278], [0.33, 0.241, -0.278], 'ledge', 'rim'],
+    [[0.33, 0.241, -0.278], [0.92, -0.059, -0.278], 'ledge', 'rim'],
   ],
 };
 // the halfpipe is an open shell: seal boxes under its decks (local space)
@@ -329,7 +332,8 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     }
     edges.length = 0;
     for (const p of props) {
-      for (const [la, lb, kind] of EDGES[p.userData.park.model] || []) {
+      const mine = [];
+      for (const [la, lb, kind, chain = null] of EDGES[p.userData.park.model] || []) {
         const a = p.localToWorld(new THREE.Vector3(...la));
         const b = p.localToWorld(new THREE.Vector3(...lb));
         const dir = b.clone().sub(a);
@@ -345,7 +349,17 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
           };
           open = perp.clone().multiplyScalar(hAt(0.3) < hAt(-0.3) ? 1 : -1);
         }
-        edges.push({ a, b, dir, len, kind, name: `${p.userData.park.model} ${kind}`, prop: p, open });
+        const e = { a, b, dir, len, kind, name: `${p.userData.park.model} ${kind}`, prop: p, open, chain, next: null, prev: null };
+        mine.push(e);
+        edges.push(e);
+      }
+      // link chained segments end to start
+      for (const e of mine) {
+        if (!e.chain) continue;
+        for (const f of mine) {
+          if (f === e || f.chain !== e.chain) continue;
+          if (f.a.distanceTo(e.b) < 1e-3) { e.next = f; f.prev = e; }
+        }
       }
     }
   }

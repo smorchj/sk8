@@ -869,6 +869,7 @@ export class SkateAnim {
       const after = this._feetY(pose);
       if (after != null) pose.hipsPos[1] -= (after - before);
     }
+    this._uprightLayer(pose, 0.75);
     // arms out to the sides: on this rig UpperArm 'z' abducts (measured:
     // L negative, R positive; 1.3 rad ≈ horizontal)
     const wob = Math.sin(this._grindT * 2.6) * 0.06;
@@ -885,6 +886,25 @@ export class SkateAnim {
       addRot(pose, 'Spine_03', 'y', side * 0.3);
       addRot(pose, 'Head', 'y', side * 0.25);
     }
+  }
+
+  // a grind tilts the root with the edge (a ledge 50-50 rolls out so the
+  // inner wheels clear the top, a ledge slide pitches over the corner, a
+  // sloped rail runs downhill); the rider stays mostly upright over it —
+  // counter-rotate the hips about the deck line by most of the tilt, and the
+  // legs take the difference (the feet stay on the deck: IK + sole plant)
+  _uprightLayer(pose, k) {
+    if (!pose.hipsRot || !pose.hipsPos) return;
+    this.phys.rootQuat(_qa).invert();
+    _vb.set(0, 1, 0).applyQuaternion(_qa);          // world up, in root space
+    if (_vb.y > 0.9999) return;
+    _qb.setFromUnitVectors(_y, _vb);
+    _qb.slerp(_qc.identity(), 1 - k);
+    const PIVOT_Y = 0.145;                          // deck top
+    _vc.set(pose.hipsPos[0], pose.hipsPos[1] - PIVOT_Y, pose.hipsPos[2]).applyQuaternion(_qb);
+    pose.hipsPos[0] = _vc.x; pose.hipsPos[1] = _vc.y + PIVOT_Y; pose.hipsPos[2] = _vc.z;
+    _qa.fromArray(pose.hipsRot).premultiply(_qb);
+    pose.hipsRot = [_qa.x, _qa.y, _qa.z, _qa.w];
   }
 
   _leanLayer(pose, steer) {
