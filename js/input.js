@@ -220,6 +220,7 @@ export class Input {
       if (k === 'h') this._directTrick('heelflip');
       if (k === 'i') this._directTrick('impossible');
       if (k === 't') this._directTrick('treflip');
+      if (k === 'g') this._directTrick('indy');
       if (k === 'c') this.cb.toggleCam?.();
       if (k === 'x') this.cb.toggleSlow?.();
       if (k === 'r') this.cb.reset?.();

@@ -164,7 +164,7 @@ export class SkateAnim {
     if (type === 'flickRight') return this.stance === 'goofy' ? 'kickflip' : 'heelflip';
     if (type === 'flickLeft') return this.stance === 'goofy' ? 'heelflip' : 'kickflip';
     if (type === 'ollie' || type === 'kickflip' || type === 'heelflip'
-      || type === 'impossible' || type === 'treflip') return type;
+      || type === 'impossible' || type === 'treflip' || type === 'indy') return type;
     return null;
   }
 
@@ -204,7 +204,7 @@ export class SkateAnim {
       popped: false,
     };
     const fakie = this.phys.rollSign < 0;
-    const pretty = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', impossible: 'Impossible', treflip: '360 Flip' }[name];
+    const pretty = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', impossible: 'Impossible', treflip: '360 Flip', indy: 'Indy' }[name];
     this.trick.label = (fakie ? 'Fakie ' : '') + pretty + (mirror ? '' : '');
     this._toState('trick');
   }

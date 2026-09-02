@@ -136,7 +136,7 @@ export class RiderCreator {
 
     if (this.o.getSkills) {
       const skills = this.o.getSkills();
-      const label = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', treflip: '360 Flip', impossible: 'Impossible' };
+      const label = { ollie: 'Ollie', kickflip: 'Kickflip', heelflip: 'Heelflip', treflip: '360 Flip', impossible: 'Impossible', indy: 'Indy' };
       rows.push(`<h3>Skills</h3><div class="note" style="margin-bottom:6px">Level = pop height (and landing odds, later)</div>` +
         Object.keys(label).map(t =>
           `<div class="row" data-group="skill" data-trick="${t}" style="align-items:center;margin-bottom:4px">

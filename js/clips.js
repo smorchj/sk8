@@ -50,6 +50,13 @@ const OVERRIDES = {
     revertSpin: true,
     halfT: 0.55,                      // 180 point, subclip-local
   },
+  // Indy (owner, 2026-09-02): the recording's board track never leaves the
+  // ground — broken in the air. Rebuild the air-window board FROM THE FEET
+  // (SKATE.md's own "glued to soles" doctrine for grabs): nose along the
+  // back→front foot line, deck seated under the ankles, edges blended into
+  // the valid grounded track. Nose from travel (the pop-rise test needs a
+  // moving board).
+  indy: { dropTracks: ['HandL', 'HandR'], boardFromFeet: true, noseFromTravel: true },
 };
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -173,6 +180,8 @@ export class Clip {
     for (const t of ov.dropTracks || []) delete c.tracks[t];
     this._grounded = !!ov.grounded;
     this._revertSpin = !!ov.revertSpin;
+    this._noseFromTravel = !!ov.noseFromTravel;
+    this._boardFromFeet = !!ov.boardFromFeet;
     this.halfT = ov.halfT ?? null;
     this._t0 = ov.subclip ? ov.subclip[0] : 0;
     const subEnd = ov.subclip ? Math.min(ov.subclip[1], c.duration) : c.duration;
@@ -310,6 +319,39 @@ export class Clip {
     // reported stance is the opposite of what the raw capture measured
     if (this._swapMirror) this.stance = this.stance === 'regular' ? 'goofy' : 'regular';
 
+    // boardFromFeet: rebuild the air-window board from the feet line (grabs)
+    if (this._boardFromFeet && this.tags.pop != null && this.tags.land != null) {
+      const feet = this._rawFeet(bones, hipsW, skel, N);
+      const front = this.stance === 'regular' ? feet.L : feet.R;
+      const back = this.stance === 'regular' ? feet.R : feet.L;
+      const i0 = Math.max(0, Math.round((this.tags.pop - 0.03) * FPS));
+      const i1 = Math.min(N - 1, Math.round((this.tags.land + 0.05) * FPS));
+      const BLEND = 4;
+      const fwd = new THREE.Vector3(), up = new THREE.Vector3(), right = new THREE.Vector3();
+      const m = new THREE.Matrix4();
+      for (let i = i0; i <= i1; i++) {
+        fwd.set(front[i*3]-back[i*3], front[i*3+1]-back[i*3+1], front[i*3+2]-back[i*3+2]).normalize();
+        right.crossVectors(fwd, Y_AXIS).normalize();
+        if (right.lengthSq() < 0.5) right.set(1,0,0);
+        up.crossVectors(right, fwd).normalize();
+        m.makeBasis(right, up, fwd);
+        _q.setFromRotationMatrix(m);
+        const mx=(front[i*3]+back[i*3])/2 - up.x*0.21;
+        const my=(front[i*3+1]+back[i*3+1])/2 - up.y*0.21;
+        const mz=(front[i*3+2]+back[i*3+2])/2 - up.z*0.21;
+        // blend into the original track at the window edges
+        const e = Math.min(1, Math.min(i - i0, i1 - i) / BLEND);
+        const ox=boardPosW[i*3], oy=boardPosW[i*3+1], oz=boardPosW[i*3+2];
+        boardPosW[i*3]   = ox + (mx-ox)*e;
+        boardPosW[i*3+1] = oy + (my-oy)*e;
+        boardPosW[i*3+2] = oz + (mz-oz)*e;
+        _q2.set(boardQuatW[i*4],boardQuatW[i*4+1],boardQuatW[i*4+2],boardQuatW[i*4+3]);
+        if (_q2.dot(_q) < 0) _q.set(-_q.x,-_q.y,-_q.z,-_q.w);
+        _q2.slerp(_q, e);
+        boardQuatW.set([_q2.x,_q2.y,_q2.z,_q2.w], i*4);
+      }
+    }
+
     // 4) ground path G(t) and 5) localize.
     // Push clips are rooted on the STANDING FOOT, not the board (owner,
     // 2026-09-01: the solver board track and the mocap foot disagree slightly —
@@ -362,7 +404,7 @@ export class Clip {
       _v.set(0, 0, s * HALF_LEN).applyQuaternion(_q);
       return bPos[i * 3 + 1] + _v.y;
     };
-    if (this.tags.pop != null) {
+    if (this.tags.pop != null && !this._noseFromTravel) {
       // just after pop, the nose end rises while the tail strikes low
       const i0 = Math.min(N - 1, Math.round(this.tags.pop * FPS));
       const i1 = Math.min(N - 1, Math.round((this.tags.pop + 0.1) * FPS));
@@ -665,6 +707,7 @@ export async function loadClips(skel, onProgress) {
     cruise: 'Cruise_slalom_revert.json',
     manual: 'Manual_V1.json',          // recovered from the recycle bin (2026-09-02)
     revertclip: 'Cruise_slalom_revert.json',   // subclipped to the mocapped revert
+    indy: 'Indy_pass1.json',           // grab: air-window board rebuilt from feet
   };
   const clips = {};
   for (const [key, file] of Object.entries(files)) {

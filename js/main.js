@@ -204,7 +204,7 @@ let anim = null;
 
 // per-trick skill levels (1..5): higher = higher pop (and, later, better
 // landing odds once bailing arrives). Lives with the rider profile.
-const SKILL_TRICKS = ['ollie', 'kickflip', 'heelflip', 'treflip', 'impossible'];
+const SKILL_TRICKS = ['ollie', 'kickflip', 'heelflip', 'treflip', 'impossible', 'indy'];
 let skills = {};
 try { skills = JSON.parse(localStorage.sk8skills || '{}'); } catch { skills = {}; }
 for (const t of SKILL_TRICKS) skills[t] = Math.min(5, Math.max(1, skills[t] || 1));
@@ -374,7 +374,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake   M manual\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake   M manual\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip G indy\nQ/E revert   C freecam   X slowmo   R reset\nB markers';
 
 function updateHUD() {
   const p = physics;
