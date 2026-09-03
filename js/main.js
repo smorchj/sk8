@@ -302,6 +302,7 @@ const recorder = new Recorder({
   getStance: () => stance, setStance, getSkills: () => ({ ...skills }), setSkill,
   fire: (name, args) => actions[name]?.(...args),
   flash,
+  tick: (dt) => tick(dt),
 });
 let lastGesture = '—';
 let lookYaw = 0, lookPitch = 0;
@@ -405,7 +406,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug\nN tag a bug   F4 save the recording';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug\nF4 review the recording: scrub, N tags a bug, save';
 
 // the debug readout is off by default (owner, 2026-09-03); F3 or SK8.hud() shows it
 function showHUD(on = !document.body.classList.contains('debug')) {
@@ -414,9 +415,10 @@ function showHUD(on = !document.body.classList.contains('debug')) {
 addEventListener('keydown', (e) => {
   if (e.code === 'F3') { e.preventDefault(); if (!e.repeat) showHUD(); return; }
   if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-  // bug recording (owner, 2026-09-03): N tags "a bug happened here", F4 saves
-  if (e.code === 'F4') { e.preventDefault(); if (!e.repeat) recorder.save(); }
-  if (e.key.toLowerCase() === 'n' && !e.repeat) recorder.tag();
+  // bug recording (owner, 2026-09-03): F4 reviews the session so far — scrub
+  // the timeline, N tags the moment shown, save writes it to _scratch/
+  if (e.code === 'F4') { e.preventDefault(); if (!e.repeat) recorder.review(); }
+  if (e.key.toLowerCase() === 'n' && !e.repeat && !recorder.replaying) recorder.tag();   // live: "that, just now"
 });
 
 function updateHUD() {
@@ -474,7 +476,7 @@ function frame() {
   let dt = Math.min(clock.getDelta(), 0.05);
   if (slowmo) dt *= 0.25;
   if (!paused) {
-    if (recorder.replaying) { const rdt = recorder.replayBegin(); if (rdt != null) tick(rdt); }
+    if (recorder.replaying) recorder.advance();   // the review's play/pause/speed
     else tick(dt);
   }
   updateHUD();
@@ -495,22 +497,17 @@ window.SK8 = {
   physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill, park, editor,
   pause(on = true) { paused = on; },
   hud(on = true) { showHUD(on); },
-  // bug recordings: SK8.replay('/_scratch/rec-….json') plays it back in the
-  // live loop; SK8.replayTo(frame) steps there at once (pause first to hold)
+  // bug recordings: SK8.replay('/_scratch/rec-….json') opens it in the review
+  // panel; SK8.replayTo(frame) seeks there at once
   recorder,
   replay: (src) => recorder.load(src),
   replayTo(n) {
-    let k = 0;
-    while (recorder.replaying && recorder.replaying.i < n && k++ < 200000) {
-      const rdt = recorder.replayBegin();
-      if (rdt == null) break;
-      tick(rdt);
-    }
+    recorder.seek(n);
     updateHUD();
     renderer.render(scene, camera);
     return recorder.replaying ? { frame: recorder.replaying.i, divergence: recorder.replaying.divergence } : { done: true };
   },
-  replayStop: () => recorder.replayStop(),
+  replayStop: () => recorder.close(),
   get anim() { return anim; },
   get rig() { return rig; },
   get clips() { return clips; },
