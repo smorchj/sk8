@@ -8,6 +8,9 @@
   html, body { margin: 0; height: 100%; background: #101216; color: #eee;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden;
     touch-action: none; -webkit-user-select: none; user-select: none; }
+  /* the cursor is out of the way while a trick is held; pointer lock hides it
+     for the whole session where the browser grants it */
+  body.holding, body.holding #viewport, body.holding canvas { cursor: none; }
   #viewport { position: fixed; inset: 0; }
   canvas { display: block; }
 

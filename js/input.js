@@ -37,6 +37,20 @@ export class Input {
     this._ctx = this._canvas.getContext('2d');
     this._fade = 0;
 
+    // POINTER LOCK (owner, 2026-09-03: "the mouse never goes away so I click
+    // off screen"): a click on the world captures and hides the cursor, so a
+    // wind-up flick or a look-around can never wander out of the window and
+    // land on something else. Escape gives the cursor back (the browser does
+    // that itself), and any panel — the map editor, the review, the creator —
+    // releases it. While locked the mouse reports MOVEMENT, not a position,
+    // so the gesture sampler follows a virtual cursor of its own.
+    this._lockEl = document.getElementById('viewport') || document.body;
+    this._vx = innerWidth / 2;
+    this._vy = innerHeight / 2;
+    this._disabled = false;
+    document.addEventListener('pointerlockchange', () => { if (!this.locked) this._vx = innerWidth / 2, this._vy = innerHeight / 2; });
+    document.addEventListener('pointerlockerror', () => { this._lockDenied = true; });   // an embedded viewer refuses it: ask once
+
     addEventListener('pointerdown', e => this._down(e));
     addEventListener('pointermove', e => this._move(e));
     addEventListener('pointerup', e => this._up(e));
@@ -51,6 +65,40 @@ export class Input {
     this._resize();
   }
 
+  get locked() { return document.pointerLockElement === this._lockEl; }
+
+  get disabled() { return this._disabled; }
+  set disabled(v) { this._disabled = v; if (v) { this.unlock(); document.body.classList.remove('holding'); } }
+
+  // Pointer lock is not available everywhere: an embedded viewer (the Claude
+  // browser pane) refuses it — "the root document of this element is not
+  // valid for pointer lock". Where it IS granted (a normal browser window)
+  // the cursor is pinned and hidden for the whole session. Where it is not,
+  // the hold still captures the pointer to the canvas and hides the cursor,
+  // so a flick cannot press anything else on the page.
+  lock() {
+    if (this._disabled || this.locked || this._lockDenied || !this._lockEl?.requestPointerLock) return;
+    try {
+      const r = this._lockEl.requestPointerLock({ unadjustedMovement: true });
+      if (r && r.catch) r.catch(() => { this._lockDenied = true; });
+    } catch { this._lockDenied = true; }
+  }
+
+  unlock() { if (this.locked) document.exitPointerLock?.(); }
+
+  // where the mouse "is": its own position when free, a virtual point moved by
+  // the raw deltas when locked. Call once per pointer event.
+  _at(e) {
+    if (e.pointerType !== 'touch' && this.locked) {
+      this._vx += e.movementX || 0;
+      this._vy += e.movementY || 0;
+    } else {
+      this._vx = e.clientX;
+      this._vy = e.clientY;
+    }
+    return this._vx;
+  }
+
   _resize() {
     this._canvas.width = innerWidth * devicePixelRatio;
     this._canvas.height = innerHeight * devicePixelRatio;
@@ -60,7 +108,7 @@ export class Input {
 
   _down(e) {
     if (this.disabled) return;                  // the map editor owns the mouse
-    if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel, #mapEditor')) return;
+    if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel, #mapEditor, #recPanel')) return;
     const isTouch = e.pointerType === 'touch';
     // touch: hold a screen EDGE to spin in the air (owner: no way to 180 on
     // phone otherwise). Also armable DURING wind-up so the rotation starts the
@@ -86,7 +134,16 @@ export class Input {
         return;
       }
       if (this._trickPtr) return;
-      this._trickPtr = { id: e.pointerId, samples: [{ t: performance.now(), x: e.clientX, y: e.clientY }] };
+      if (!isTouch) {                                   // capture the cursor for the hold
+        this.lock();
+        this._vx = innerWidth / 2; this._vy = innerHeight / 2;
+        // the drag belongs to the canvas until the button comes up: it can no
+        // longer press a button, the HUD or anything else on the way past
+        try { e.target?.setPointerCapture?.(e.pointerId); } catch { /* not capturable */ }
+        document.body.classList.add('holding');         // and the cursor gets out of the way
+      }
+      this._at(e);
+      this._trickPtr = { id: e.pointerId, samples: [{ t: performance.now(), x: this._vx, y: this._vy }] };
       this.holdingTrick = true;
       this.cb.windupStart?.();
     } else {
@@ -100,15 +157,17 @@ export class Input {
 
   _move(e) {
     if (this.disabled) return;
+    this._at(e);
+    const mx = this._vx, my = this._vy;
     if (this._trickPtr && e.pointerId === this._trickPtr.id) {
-      this._trickPtr.samples.push({ t: performance.now(), x: e.clientX, y: e.clientY });
+      this._trickPtr.samples.push({ t: performance.now(), x: mx, y: my });
       if (this._trickPtr.samples.length > 400) this._trickPtr.samples.shift();
       this._fade = 1;
       // MANUAL (owner spec): DOUBLE swipe down — a completed down-flick armed
       // recently, then a second downward pull on a new touch enters the manual
       // and holds it until the finger lifts.
       const p0 = this._trickPtr.samples[0];
-      const dy = e.clientY - p0.y, dx = e.clientX - p0.x;
+      const dy = my - p0.y, dx = mx - p0.x;
       if (!this._manualOn && this._downFlickAt &&
           performance.now() - this._downFlickAt < 450 && dy > 55 && dy > Math.abs(dx)) {
         this._downFlickAt = 0;
@@ -117,22 +176,22 @@ export class Input {
       }
     } else if (this._steerPtr && e.pointerId === this._steerPtr.id) {
       const p = this._steerPtr;
-      const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+      const dx = mx - p.x0, dy = my - p.y0;
       // PUSH SWIPE (mobile): a fast downward swipe on the left/right side of
       // the screen = one push stroke. Re-arms so a continued downward rub
       // keeps the strokes coming; steering is locked for that drag.
       const onSide = p.x0 < innerWidth * 0.38 || p.x0 > innerWidth * 0.62;
       if (onSide && dy > 55 && dy > Math.abs(dx) * 1.2 && performance.now() - p.t0 < 450) {
         p.pushed = true;
-        p.x0 = e.clientX; p.y0 = e.clientY; p.t0 = performance.now();   // re-arm
+        p.x0 = mx; p.y0 = my; p.t0 = performance.now();   // re-arm
         this._dragSteer = 0;
         this.cb.push?.();
         return;
       }
       // a push-swipe drag that moves clearly sideways becomes a steer drag
       // again (owner bug: the lock ate the turn, so an ollie never spun)
-      if (p.pushed && Math.abs(dx) > 45) { p.pushed = false; p.x0 = e.clientX; p.y0 = e.clientY; }
-      if (!p.pushed) this._dragSteer = Math.max(-1, Math.min(1, (e.clientX - p.x0) / 110));
+      if (p.pushed && Math.abs(dx) > 45) { p.pushed = false; p.x0 = mx; p.y0 = my; }
+      if (!p.pushed) this._dragSteer = Math.max(-1, Math.min(1, (mx - p.x0) / 110));
     }
   }
 
@@ -152,6 +211,7 @@ export class Input {
       const samples = this._trickPtr.samples;
       this._trickPtr = null;
       this.holdingTrick = false;
+      document.body.classList.remove('holding');
       if (this._manualOn) {                       // release ends the manual
         this._manualOn = false;
         this.cb.manualEnd?.();

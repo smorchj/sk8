@@ -329,7 +329,7 @@ bReg.addEventListener('click', () => setStance('regular'));
 bGoof.addEventListener('click', () => setStance('goofy'));
 setStance(stance);
 
-document.getElementById('openCreator').addEventListener('click', () => creator.open());
+document.getElementById('openCreator').addEventListener('click', () => { input.unlock(); creator.open(); });
 
 // ── camera ──────────────────────────────────────────────────────────────────
 
@@ -452,7 +452,7 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug\nF4 review the recording: scrub, N tags a bug, save';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug   Esc frees the mouse\nF4 review the recording: scrub, N tags a bug, save';
 
 // the debug readout is off by default (owner, 2026-09-03); F3 or SK8.hud() shows it
 function showHUD(on = !document.body.classList.contains('debug')) {
