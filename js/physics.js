@@ -51,7 +51,11 @@ const BODY_PROBES = [0.03, 0.08, 0.2, 0.32, 0.44, 0.56, 0.68, 0.8, 0.95, 1.1];  
                                // through them")
 const WALL_REACH = 0.14;       // m — keep this much between the board and a wall
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
-const LAND_LOOKAHEAD = 0.3;    // s — start tilting to the landing surface this early
+const LAND_LOOKAHEAD = 0.45;   // s — start tilting to the landing surface this early
+const AIR_UPRIGHT = 2.5;       // 1/s — the root straightens toward upright through an air; the
+                               // body no longer flies lying at the face's angle (owner's tags
+                               // 2026-09-03: a 360 spun a flat body like a propeller — "the wrong
+                               // axis"); the landing look-ahead tilts it back to the face it meets
 const VERT_GUIDE = 2.5;        // 1/s — how firmly a vert air is guided back into the face
 const VERT_OUT = 0.22;         // m — where a vert air hangs, out from the coping plane
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
@@ -804,10 +808,11 @@ export class SkatePhysics {
     _qs.setFromAxisAngle(WORLD_UP, d);
     this.forward.applyQuaternion(_qs);
     this.up.applyQuaternion(_qs);
-    // the root KEEPS the tilt it left the surface with (owner: it must not
-    // turn upright in the air); only when the landing surface is close does
-    // it blend to that surface's normal — a quarter pipe air comes back into
-    // the face still tilted, a flyout onto the ground straightens up late
+    // the root straightens toward upright through the air (smoothly — never
+    // a snap), and only when the landing surface is close does it tilt to
+    // that surface's normal: a quarter pipe air comes back into the face
+    // tilted again, a flyout onto the ground stays upright
+    this.up.lerp(WORLD_UP, Math.min(1, dt * AIR_UPRIGHT)).normalize();
     if (this.world && vel.y < 0) {                             // only while coming down
       const spd = vel.length();
       if (spd > 1e-4) {
