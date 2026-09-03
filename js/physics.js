@@ -52,6 +52,7 @@ const BODY_PROBES = [0.03, 0.08, 0.2, 0.32, 0.44, 0.56, 0.68, 0.8, 0.95, 1.1];  
                                // and probes at the wheels and knees alone passed under/between them
                                // (owner: "never ollied, yet ended up on top of the bench", "I drive
                                // through them")
+const WALL_EMBED = 0.05;       // m — a face closer than this to the body is pushing INTO it: step out
 const WALL_REACH = 0.14;       // m — keep this much between the board and a wall
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
 const LAND_LOOKAHEAD = 0.3;    // s — start tilting to the landing surface this early
@@ -486,6 +487,20 @@ export class SkatePhysics {
     // corner line can thread into the block); the park measured which side
     // is open when it built the edge
     if (g.edge.open) this.pos.addScaledVector(g.edge.open, GRIND_EXIT_OUT);
+    // a stall on a RAIL steps off to the SIDE, never straight down: the bar is
+    // ignored for a moment after any rail exit, and a straight drop fell
+    // through it and left the rider standing under the bar, held in by it
+    // from every side (owner's "rail bugs" recording: 36.0 s stall, stuck
+    // from 36.3 s on). The side is the rider's own — where the chest faces
+    if (!g.edge.open && g.edge.kind === 'rail' && reason === 'stall') {
+      _x.crossVectors(this.up, g.edge.dir); _x.y = 0;
+      if (_x.lengthSq() < 1e-6) _x.set(-g.edge.dir.z, 0, g.edge.dir.x);
+      _x.normalize();
+      _d.crossVectors(this.up, this.forward);
+      if (_d.dot(_x) < 0) _x.negate();
+      this.pos.addScaledVector(_x, GRIND_EXIT_OUT);
+      this.vel.addScaledVector(_x, 0.6);
+    }
     // only a RAIL's prop is ignored (a thin bar the root sat inside); a ledge
     // belongs to a solid block — ignoring that let a stall fall through it
     if (this.world && g.edge.prop && g.edge.kind === 'rail') { this.world.setIgnored(g.edge.prop); this._ignoreT = GRIND_IGNORE; }
@@ -693,6 +708,10 @@ export class SkatePhysics {
         _o.copy(this.pos).addScaledVector(up, BODY_PROBES[k]);
         const hit = this.world.cast(_o, _d, spd * dt + WALL_REACH);
         if (!hit) continue;
+        // a face seen from BEHIND is one we are already past — inside a rail's
+        // post, a bench leg — and cannot be a wall; treating it as one held the
+        // rider inside the post from every side. Walk out through it
+        if (hit.backface) continue;
         const prop = isProp(hit.object.userData.collider || '');
         // wheel height: anything steep is a wall (on a prop, anything steeper
         // than a rideable top). Higher up: a prop's face at any angle is a
@@ -709,6 +728,10 @@ export class SkatePhysics {
           // owner's "stuck in the flat rail" and the dead stop at a ramp foot.)
           const into = vel.dot(hit.normal);
           if (into < 0) vel.addScaledVector(hit.normal, -into * 1.02);
+          // embedded in it (the face is right at the body): push out along the
+          // face's normal, a little each substep — a rider standing inside a
+          // rail's bar or base walks free instead of being held by every probe
+          if (hit.distance < WALL_EMBED) this.pos.addScaledVector(hit.normal, WALL_EMBED - hit.distance);
           break;
         }
       }
