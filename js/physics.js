@@ -28,6 +28,9 @@ const STEER_RATE_HI = 0.85;    // rad/s at top speed
 const CARVE_SCRUB = 0.25;      // speed lost per rad of turning
 const GRIP = 14;               // 1/s — how fast lateral velocity dies (trucks grip)
 const LAND_DAMP = 0.955;       // speed kept on touchdown
+const LAND_KEEP = 0.6;         // on a transition, this much of the impact's normal speed rolls on
+                               // along the face (the legs absorb it, the board keeps rolling — a
+                               // re-entry must not bleed the speed the pump built)
 const AIR_SPIN_RATE = 6.0;     // rad/s of root spin at full input while airborne
                                // (fast enough that a skill-5 pop completes a 360)
 const SUBSTEP = 1 / 240;       // s — fixed physics step (curved transitions need it)
@@ -53,7 +56,8 @@ const WALL_REACH = 0.14;       // m — keep this much between the board and a w
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
 const LAND_LOOKAHEAD = 0.3;    // s — start tilting to the landing surface this early
 const VERT_GUIDE = 2.5;        // 1/s — how firmly a vert air is guided back into the face
-const VERT_OUT = 0.22;         // m — where a vert air hangs, out from the coping plane
+const VERT_OUT = 0.12;         // m — where a vert air hangs, out from the coping plane (close: the
+                               // re-entry meets the face where it is near vertical, little speed lost)
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
 const PIVOT = 0.35;            // fraction of the steer rate available at a standstill (kick-turn)
 // pumping (owner, 2026-09-03): HOLDING the wind-up while riding a transition
@@ -246,8 +250,19 @@ export class SkatePhysics {
   // behind its back was undone on the next step (owner: "the revert 180
   // leaves the rider in the starting position")
   setYaw(yaw) {
+    let d = yaw - this.yaw;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    // keep the facing in the surface plane and turn it by the difference —
+    // never rebuild it from the horizontal heading: on a steep face that
+    // turned the board across the transition after every landing (a 15°
+    // carve became 38°, and the rider rode out of the halfpipe's side)
+    _f.copy(this.forward).addScaledVector(this.up, -this.forward.dot(this.up));
+    if (_f.lengthSq() < 0.04) { this.yaw = yaw; this._surfaceForward(); return; }
+    this.forward.copy(_f.normalize());
+    _qs.setFromAxisAngle(this.up, d);
+    this.forward.applyQuaternion(_qs);
     this.yaw = yaw;
-    this._surfaceForward();
   }
 
   // how far a point lies beyond a coping's ENDS, along the coping (0 while
@@ -697,7 +712,7 @@ export class SkatePhysics {
       // and used to fire a bogus escape onto the deck. Only OUR closed
       // colliders count: a prop's backface is just its open, double-sided
       // mesh — reading it as "inside" put the rider on top of the bench)
-      if (this._inside || this.world.insideOf(_o.copy(this.pos).addScaledVector(up, 0.04), isTransition)) {
+      if (this._inside || this.world.insideOf(_o.copy(this.pos).addScaledVector(up, 0.04), isTransition, 1.0, up)) {
         // INSIDE a transition collider (owner: "stuck inside the quarter
         // pipe") — get back onto the top surface straight above and stop.
         // Done here, in full: letting the escape ray fall through to the
@@ -951,7 +966,9 @@ export class SkatePhysics {
       if (hit && vel.dot(hit.normal) < 0) {
         this.pos.copy(hit.point);
         this.up.copy(hit.normal);
-        vel.addScaledVector(this.up, -vel.dot(this.up));
+        const into = -vel.dot(this.up);
+        vel.addScaledVector(this.up, into);
+        if (transition && into > 0 && vel.lengthSq() > 1e-4) vel.multiplyScalar(1 + LAND_KEEP * into / vel.length());
         vel.multiplyScalar(LAND_DAMP);
         this.grounded = true;
         this.groundY = this.pos.y;

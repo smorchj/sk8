@@ -89,8 +89,11 @@ export class CollisionWorld {
   // double-sided thing (a bench seat has no underside): its backfaces say
   // nothing about being inside, and reading them as "inside" teleported the
   // rider onto the bench
-  insideOf(point, tagTest, up = 3) {
-    const h = this.cast(point, UP, up);
+  // (`dir` = which way to look; the rider passes its surface normal — a
+  // straight-up ray from a transition's face meets the lip curling over it
+  // and read as "inside", stopping every re-entry dead)
+  insideOf(point, tagTest, up = 3, dir = UP) {
+    const h = this.cast(point, dir, up);
     return !!(h && h.backface && tagTest(h.object.userData.collider || ''));
   }
 }

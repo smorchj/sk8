@@ -317,10 +317,21 @@ export class SkateAnim {
         if (b) {
           _v.set(0, 0, 1).applyQuaternion(_q.fromArray(b.quat));
           tr.landFrame = { x: b.pos[0], z: b.pos[2], yaw: Math.atan2(_v.x, _v.z) };
-          const cy = Math.cos(phys.yaw), sy = Math.sin(phys.yaw);
-          phys.pos.x += cy * tr.landFrame.x + sy * tr.landFrame.z;
-          phys.pos.z += -sy * tr.landFrame.x + cy * tr.landFrame.z;
-          phys.setYaw(phys.yaw + tr.landFrame.yaw);   // (the facing follows the re-anchored heading)
+          // the offset lies in the ROOT's plane — along the landing surface,
+          // never into it: on a transition the old horizontal shift pushed the
+          // root into the wall, the inside-escape fired and stopped the rider
+          // dead on every re-entry (owner: "it slows down at the landing")
+          // only the FORWARD part of the offset moves the root: a clip's
+          // sideways drift (the ollie lands 0.21 m to the side) is capture
+          // drift, not travel — folded in, ten airs walked a pumping rider
+          // 2 m across the halfpipe and off its side
+          tr.landFrame.x = 0;
+          phys.pos.addScaledVector(phys.forward, tr.landFrame.z);
+          // the heading fold only for a real trick: the ollie clip lands a
+          // couple of degrees off, and folding that into the root on every
+          // plain air turned the rider a little more each pass
+          if (tr.name !== 'air') phys.setYaw(phys.yaw + tr.landFrame.yaw);
+          else tr.landFrame.yaw = 0;
           const n = phys.noseDir(_v);
           const va = phys.vel.x * n.x + phys.vel.z * n.z;
           if (Math.abs(va) > 0.3) phys.rollSign = Math.sign(va) || phys.rollSign;
