@@ -67,7 +67,7 @@ export class Recorder {
     if (this.replaying) return null;
     const t = { id: this.tags.length + 1, frame: this.frames.length, t: +this.time.toFixed(2) };
     this.tags.push(t);
-    this.flash?.(`BUG #${t.id} tagged`);
+    this.flash?.(`BUG #${t.id} tagged (the last 10 s)`);
     console.log(`[sk8 rec] bug #${t.id} tagged at frame ${t.frame} (${t.t}s)`);
     return t;
   }

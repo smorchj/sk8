@@ -230,6 +230,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   function pipeProxy() {
     const P = pipeProfile;
     const hw = (x) => Math.abs(x) >= PIPE.deckFrom ? PIPE.deckHalfW : PIPE.halfW;
+    const hwWall = hw;
     const ground = PIPE.ground;
     const pos = [], idx = [];
     const V = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };
@@ -265,7 +266,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     };
     for (const outward of [-1, 1]) {
       for (let i = 1; i < P.length; i++) {
-        const z0 = outward * hw(P[i - 1].x), z1 = outward * hw(P[i].x);
+        const z0 = outward * hwWall(P[i - 1].x), z1 = outward * hwWall(P[i].x);
         const a0 = PV(P[i - 1].x, ground, z0), a1 = PV(P[i - 1].x, P[i - 1].y, z0);
         const b1 = PV(P[i].x, P[i].y, z1), b0 = PV(P[i].x, ground, z1);
         tri(a0, a1, b1, outward);

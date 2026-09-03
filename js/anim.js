@@ -319,7 +319,7 @@ export class SkateAnim {
           const cy = Math.cos(phys.yaw), sy = Math.sin(phys.yaw);
           phys.pos.x += cy * tr.landFrame.x + sy * tr.landFrame.z;
           phys.pos.z += -sy * tr.landFrame.x + cy * tr.landFrame.z;
-          phys.yaw += tr.landFrame.yaw;
+          phys.setYaw(phys.yaw + tr.landFrame.yaw);   // (the facing follows the re-anchored heading)
           const n = phys.noseDir(_v);
           const va = phys.vel.x * n.x + phys.vel.z * n.z;
           if (Math.abs(va) > 0.3) phys.rollSign = Math.sign(va) || phys.rollSign;
@@ -419,7 +419,7 @@ export class SkateAnim {
         const cy = Math.cos(phys.yaw), sy = Math.sin(phys.yaw);
         phys.pos.x += cy * f.x + sy * f.z;
         phys.pos.z += -sy * f.x + cy * f.z;
-        phys.yaw += f.yaw;
+        phys.setYaw(phys.yaw + f.yaw);            // (the facing follows, or the 180 is undone next step)
         if (exit === 'half') phys.rollSign = -phys.rollSign;
         else { this.lastTrick = 'Revert 360'; this.onTrick?.(this.lastTrick); }
         this._retarget(this.out, f);

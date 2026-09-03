@@ -40,10 +40,15 @@ const TURN_WINDOW = 0.25;      // m of travel over which convex turning is accum
 const TURN_LEAVE = 0.8;        // ≈46° of convex turn inside that window = an edge, leave (a 28° hip crest is not)
 const TURN_TIME = 0.25;        // s — the accumulated turn also fades with time (slow crawls)
 const WALL_DOT = 0.55;         // hit normal · up below this = a wall: slide, don't climb
-const BODY_PROBES = [0.08, 0.3, 0.55, 0.8, 1.05];   // m up the rider: wheels, shins, knees, hips, waist —
-                               // a prop's face at ANY of these is a wall: a bench seat overhangs, and
-                               // probes at the wheels and knees alone passed under it (owner: "never
-                               // ollied, yet ended up on top of the bench")
+const STEP_UP = 0.04;          // m — a prop's top higher than this above the wheels is a curb: the board
+                               // stops at it, it never rolls up onto it (owner: "on top of the rail
+                               // stand without an ollie — physically impossible")
+const BODY_PROBES = [0.03, 0.08, 0.2, 0.32, 0.44, 0.56, 0.68, 0.8, 0.95, 1.1];   // m up the rider, every ~12 cm
+                               // from the wheels to the waist — a prop's face at ANY of these is a
+                               // wall: a bench seat overhangs, a rail's bar and a seat plank are thin,
+                               // and probes at the wheels and knees alone passed under/between them
+                               // (owner: "never ollied, yet ended up on top of the bench", "I drive
+                               // through them")
 const WALL_REACH = 0.14;       // m — keep this much between the board and a wall
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
 const LAND_LOOKAHEAD = 0.3;    // s — start tilting to the landing surface this early
@@ -60,7 +65,7 @@ const PIVOT = 0.35;            // fraction of the steer rate available at a stan
 const TRANSFER_REACH = 3.0;    // m — a neighbouring coping this close to where the air would come down
 const TRANSFER_ACCEL = 9.0;    // m/s² — how hard the air is pulled onto that face
 const TRANSFER_TURN = 5.0;     // 1/s — how fast the board turns to the new face's fall line
-const TRANSFER_INSET = 0.7;    // m — aim this far in from a coping's ends, never at the very edge
+const TRANSFER_INSET = 0.9;    // m — aim this far in from a coping's ends, never at the very edge
 const EDGE_SNAP = 0.35;        // m — an air that comes down a hair outside a ramp's width is put this
                                // far onto the ramp and lands on its face (owner: "anything landing by
                                // the edge, I'm literally getting pushed away from the pipe")
@@ -225,6 +230,25 @@ export class SkatePhysics {
   setEdges(edges) { this.edges = edges || []; }
   setTransitions(list) { this.transitions = list || []; }
 
+  // set the heading from outside (a revert's 180, a reset): the facing
+  // follows — the facing is the master on the ground, and a heading written
+  // behind its back was undone on the next step (owner: "the revert 180
+  // leaves the rider in the starting position")
+  setYaw(yaw) {
+    this.yaw = yaw;
+    this._surfaceForward();
+  }
+
+  // how far a point lies beyond a coping's ENDS, along the coping (0 while
+  // between them) — sideways, ignoring how far out from the face it is
+  _beyondEnds(t, p) {
+    _tv.subVectors(t.b, t.a);
+    const len = Math.hypot(_tv.x, _tv.z);
+    if (len < 1e-6) return 0;
+    const u = ((p.x - t.a.x) * _tv.x + (p.z - t.a.z) * _tv.z) / (len * len);
+    return u < 0 ? -u * len : u > 1 ? (u - 1) * len : 0;
+  }
+
   // the point on a transition's coping line nearest to p (horizontally)
   _closestOnCoping(t, p, out, inset = 0) {
     _tv.subVectors(t.b, t.a);
@@ -256,14 +280,13 @@ export class SkatePhysics {
     const disc = vy * vy + 2 * G * h;
     const tLand = disc > 0 ? (vy + Math.sqrt(disc)) / G : 0;
     _tl.set(this.pos.x + vel.x * tLand, v.lip.y, this.pos.z + vel.z * tLand);
-    // its own ramp keeps the air only if the air comes down ON it (within
-    // 0.6 m of its coping line); otherwise the rider is leaving it, and the
-    // nearest neighbouring face they are moving toward takes over
+    // its own ramp keeps the air as long as the air comes down within its
+    // WIDTH (sideways — how far out from the face it hangs is the ordinary
+    // vert air and never a reason to transfer); only an air heading past
+    // the ramp's end is leaving it, and then the nearest neighbouring face
+    // it is moving toward takes over
     let best = null, bestD = TRANSFER_REACH;
-    if (v.face) {
-      const q = this._closestOnCoping(v.face, _tl, _tq);
-      if (Math.hypot(_tl.x - q.x, _tl.z - q.z) <= 0.6) { v.target = null; return; }
-    }
+    if (v.face && this._beyondEnds(v.face, _tl) <= 0.3) { v.target = null; return; }
     if (v.target) {                                          // a chosen neighbour is sticky
       const q = this._closestOnCoping(v.target, _tl, _tq);
       best = v.target; bestD = Math.hypot(_tl.x - q.x, _tl.z - q.z) - 0.5;
@@ -297,19 +320,23 @@ export class SkatePhysics {
       vel.z += az * k * dt;
     }
     // and turn the board (root: facing AND tilt) onto the new face's fall
-    // line — nose up the face or nose down it, whichever is nearer (a spun
-    // air lands nose-first) — so the rider comes down straight into it, not
-    // carving across it and off its side
-    const upFace = Math.atan2(-best.out.x, -best.out.z);
-    let d1 = upFace - this.yaw, d2 = upFace + Math.PI - this.yaw;
-    while (d1 > Math.PI) d1 -= 2 * Math.PI; while (d1 < -Math.PI) d1 += 2 * Math.PI;
-    while (d2 > Math.PI) d2 -= 2 * Math.PI; while (d2 < -Math.PI) d2 += 2 * Math.PI;
-    const step = (Math.abs(d1) <= Math.abs(d2) ? d1 : d2) * Math.min(1, dt * TRANSFER_TURN);
-    if (Math.abs(step) > 1e-6) {
-      _qs.setFromAxisAngle(WORLD_UP, step);
-      this.forward.applyQuaternion(_qs);
-      this.up.applyQuaternion(_qs);
-      this.yaw += step;
+    // line — nose up the face or nose down it, whichever is nearer — so the
+    // rider comes down straight into it instead of carving across it and
+    // off its side. Never against the player: while they hold a spin the
+    // assist waits (a held 180 finishes to whichever way is nearer once
+    // they let go)
+    if (Math.abs(this.steer) < 0.2 && Math.abs(this.spin) < 0.2) {
+      const upFace = Math.atan2(-best.out.x, -best.out.z);
+      let d1 = upFace - this.yaw, d2 = upFace + Math.PI - this.yaw;
+      while (d1 > Math.PI) d1 -= 2 * Math.PI; while (d1 < -Math.PI) d1 += 2 * Math.PI;
+      while (d2 > Math.PI) d2 -= 2 * Math.PI; while (d2 < -Math.PI) d2 += 2 * Math.PI;
+      const step = (Math.abs(d1) <= Math.abs(d2) ? d1 : d2) * Math.min(1, dt * TRANSFER_TURN);
+      if (Math.abs(step) > 1e-6) {
+        _qs.setFromAxisAngle(WORLD_UP, step);
+        this.forward.applyQuaternion(_qs);
+        this.up.applyQuaternion(_qs);
+        this.yaw += step;
+      }
     }
   }
 
@@ -624,8 +651,8 @@ export class SkatePhysics {
         // wall — the body cannot pass through a bench, a table, a ledge; on
         // the terrain and the transitions only a near-vertical face is (a
         // transition rising ahead is NOT a wall)
-        const wall = k === 0 ? hit.normal.dot(up) < (prop ? RIDE_MIN_Y : WALL_DOT)
-                             : (prop || hit.normal.dot(up) < 0.15);
+        const wall = k <= 1 ? hit.normal.dot(up) < (prop ? RIDE_MIN_Y : WALL_DOT)
+                            : (prop || hit.normal.dot(up) < 0.15);
         if (wall) {
           const into = vel.dot(hit.normal);
           if (into < 0) vel.addScaledVector(hit.normal, -into * 1.02);
@@ -672,6 +699,15 @@ export class SkatePhysics {
           this.groundY = this.pos.y;
           this.surface = top.object.userData.collider || null;
         }
+        vel.set(0, 0, 0);
+        this._turn = 0; this._prevN = null;
+        return;
+      }
+      if (hit && PROBE_UP - hit.distance > STEP_UP && isProp(hit.object.userData.collider || '')) {
+        // a prop's top more than a wheel's height ABOVE the wheels (a rail's
+        // base, a bench foot, a plank): a curb. The board stops against it;
+        // it never rolls up onto it — that takes an ollie
+        this.pos.addScaledVector(vel, -dt);
         vel.set(0, 0, 0);
         this._turn = 0; this._prevN = null;
         return;
@@ -762,11 +798,12 @@ export class SkatePhysics {
     this._steerSm += (target - this._steerSm) * Math.min(1, dt * 8);
     const d = -this._steerSm * AIR_SPIN_RATE * dt;
     this.airSpin += d;
-    // the spin turns the root about ITS OWN up (owner: the air spin looked
-    // laggy and snapped — re-deriving the facing from the heading through a
-    // tilted up swings unevenly); the heading follows the facing
-    _qs.setFromAxisAngle(this.up, d);
+    // the spin turns the WHOLE root — facing and tilt — about the vertical:
+    // a 180 off a quarter pipe is a spin, never a cartwheel about the face's
+    // normal (owner: "rotating around the wrong axis"); the heading follows
+    _qs.setFromAxisAngle(WORLD_UP, d);
     this.forward.applyQuaternion(_qs);
+    this.up.applyQuaternion(_qs);
     // the root KEEPS the tilt it left the surface with (owner: it must not
     // turn upright in the air); only when the landing surface is close does
     // it blend to that surface's normal — a quarter pipe air comes back into
@@ -826,15 +863,15 @@ export class SkatePhysics {
       _d.copy(vel).normalize();
       // (reach past the lift so a surface right under a slow fall is found)
       const hit = this._sweepCast(_o, _d, step + 0.12);
-      // a ramp's END PANEL hit from the air: the rider is coming down a hair
-      // outside the ramp's width. Skate/Tony Hawk are generous here — put
-      // them onto the ramp and land on its face, never deflect them off the
-      // side (owner: "anything from the side, anything landing by the edge,
-      // I'm getting pushed away from the pipe")
+      // a ramp's END PANEL hit from the air, just below the face's edge: the
+      // rider is coming down a hair outside the ramp's width — put them onto
+      // the face, never deflect them off the side (owner: "anything landing
+      // by the edge, I'm getting pushed away from the pipe"). Well below the
+      // face it is a wall like any other.
       if (hit && !hit.backface && hit.object.userData.panel) {
         _o.copy(hit.point).addScaledVector(hit.normal, -EDGE_SNAP);
         const top = this._groundCast(_o.addScaledVector(WORLD_UP, 3), DOWN, 6, WORLD_UP, -1);
-        if (top && !top.backface && top.point.y < hit.point.y + 0.6 && TRANSITION.test(top.object.userData.collider || '')) {
+        if (top && !top.backface && top.point.y < hit.point.y + 0.4 && TRANSITION.test(top.object.userData.collider || '')) {
           this.pos.copy(top.point);
           this.up.copy(top.normal);
           vel.addScaledVector(this.up, -vel.dot(this.up));
@@ -891,6 +928,14 @@ export class SkatePhysics {
         this.groundY = this.pos.y;
         this.surface = hit.object.userData.collider || null;
         this.surfaceFace = hit.object.userData.faceWorld || null;
+        // a gap transfer touches down ON the new face's fall line (nose up
+        // it or down it, whichever the board is nearer to), so it rolls
+        // straight down instead of carving across and off the side
+        if (this.vert?.target && Math.abs(this.steer) < 0.2 && Math.abs(this.spin) < 0.2) {
+          const o = this.vert.target.out;
+          const s = this.forward.x * o.x + this.forward.z * o.z > 0 ? 1 : -1;
+          this.forward.set(o.x * s, 0, o.z * s);
+        }
         this.vert = null;
         this._keepForward();
         this.events.push({ type: 'land', airTime: this.airTime });

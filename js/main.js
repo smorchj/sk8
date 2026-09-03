@@ -280,8 +280,10 @@ const actions = {
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },
   toggleSlow: () => { slowmo = !slowmo; },
   reset: () => {
-    physics.pos.set(START.x, 0, START.z); physics.vel.set(0, 0, 2); physics.yaw = START.yaw;
+    physics.pos.set(START.x, 0, START.z); physics.vel.set(0, 0, 2);
     physics.rollSign = 1; physics.up.set(0, 1, 0); physics.grounded = true;
+    physics.vert = null; physics.grind = null;
+    physics.setYaw(START.yaw);
   },
 };
 const recordedActions = Object.fromEntries(Object.entries(actions).map(([k, f]) => [k, (...a) => { recorder.cb(k, a); return f(...a); }]));
@@ -520,7 +522,7 @@ window.SK8 = {
     if (on) {
       physics.vel.set(0, 0, 0);
       physics.pos.set(START.x, 0, START.z);
-      physics.yaw = START.yaw;
+      physics.up.set(0, 1, 0); physics.setYaw(START.yaw);
       freecam = true; controls.enabled = true;
       camera.position.set(START.x + dist, height, START.z);
       controls.target.set(START.x, 0.9, START.z);
