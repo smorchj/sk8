@@ -56,6 +56,18 @@ export const DEFAULT_LAYOUT = [
 // round the bend — owner: "the curved bench jagged grinds")
 let chainSeq = 0;
 const poly = (pts, chain = 'c' + (chainSeq++)) => pts.slice(1).map((p, i) => [pts[i], p, 'ledge', chain]);
+// the curved bench's seat: its inner and outer top edges (local, probed on the
+// mesh). Grindable both, and the SOLID the bench collides as is built from them
+const BENCH_INNER = [
+  [-0.904, 0.118, -0.628], [-0.545, 0.118, -0.491], [-0.27, 0.118, -0.351], [-0.041, 0.118, -0.205],
+  [0.125, 0.118, -0.061], [0.243, 0.118, 0.082], [0.34, 0.118, 0.213], [0.447, 0.118, 0.401],
+  [0.531, 0.118, 0.603], [0.611, 0.118, 0.856],
+];
+const BENCH_OUTER = [
+  [-0.452, 0.118, -0.755], [-0.134, 0.118, -0.601], [0.145, 0.118, -0.441], [0.346, 0.118, -0.269],
+  [0.492, 0.118, -0.109], [0.611, 0.118, 0.058], [0.727, 0.118, 0.261], [0.825, 0.118, 0.472],
+  [0.922, 0.118, 0.731],
+];
 const EDGES = {
   grind_rail: [[[-0.86, 0.154, 0], [0.86, 0.154, 0], 'rail']],
   // the picnic table (owner: "two types of benches, none grindable"): both
@@ -71,18 +83,7 @@ const EDGES = {
   // of the top rides (owner, 2026-09-03). Both corner lines traced on the
   // collision mesh 2026-09-03 (cross-scans at ten stations; the top is
   // ~0.9 m wide and the old centreline sat up to 0.12 m off it).
-  curve_bridge: [
-    ...poly([
-      [-0.904, 0.118, -0.628], [-0.545, 0.118, -0.491], [-0.27, 0.118, -0.351], [-0.041, 0.118, -0.205],
-      [0.125, 0.118, -0.061], [0.243, 0.118, 0.082], [0.34, 0.118, 0.213], [0.447, 0.118, 0.401],
-      [0.531, 0.118, 0.603], [0.611, 0.118, 0.856],
-    ]),
-    ...poly([
-      [-0.452, 0.118, -0.755], [-0.134, 0.118, -0.601], [0.145, 0.118, -0.441], [0.346, 0.118, -0.269],
-      [0.492, 0.118, -0.109], [0.611, 0.118, 0.058], [0.727, 0.118, 0.261], [0.825, 0.118, 0.472],
-      [0.922, 0.118, 0.731],
-    ]),
-  ],
+  curve_bridge: [...poly(BENCH_INNER), ...poly(BENCH_OUTER)],
   // (corners re-probed 2026-09-03 with the board's real contact geometry: the
   // rim's corner is at local z −0.278 and its bank crest is a straight line
   // that reaches the top at |x| 0.33, not 0.3 — the old line sagged 7 cm)
@@ -430,6 +431,62 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     return mesh;
   }
 
+  // THE CURVED BENCH COLLIDES AS A SOLID (owner, 2026-09-03: "you need a
+  // proper collision — problem with using the mesh as collision"): its mesh
+  // is a comb of slats, legs and slat ends at every angle, and the wall
+  // probes carved the speed away face by face, or read a mis-wound face from
+  // behind and let the rider through the seat. The solid: the ring between
+  // the seat's inner and outer top edges, extruded from the model's floor to
+  // the seat top, closed, wound outward. Rideable on top, clean walls on the
+  // sides, the edges still grind. The visual mesh no longer collides.
+  function benchProxy(minY) {
+    const N = 14;
+    const resample = (pts) => {
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][2] - pts[i - 1][2]));
+      const L = cum[cum.length - 1], out = [];
+      for (let k = 0; k < N; k++) {
+        const t = L * k / (N - 1);
+        let i = 1; while (i < cum.length - 1 && cum[i] < t) i++;
+        const f = (t - cum[i - 1]) / Math.max(1e-9, cum[i] - cum[i - 1]);
+        out.push([pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, pts[i - 1][2] + (pts[i][2] - pts[i - 1][2]) * f]);
+      }
+      return out;
+    };
+    const I = resample(BENCH_INNER), O = resample(BENCH_OUTER);
+    const top = BENCH_INNER[0][1], bot = minY - 0.02;
+    const pos = [], idx = [];
+    const V = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };
+    const It = I.map(q => V(q[0], top, q[1])), Ot = O.map(q => V(q[0], top, q[1]));
+    const Ib = I.map(q => V(q[0], bot, q[1])), Ob = O.map(q => V(q[0], bot, q[1]));
+    const P = (k) => new THREE.Vector3(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]);
+    // a quad wound so its normal agrees with `want`
+    const quad = (a, b, c, d, want) => {
+      const n = new THREE.Vector3().subVectors(P(b), P(a)).cross(new THREE.Vector3().subVectors(P(c), P(a)));
+      if (n.dot(want) < 0) idx.push(a, c, b, a, d, c); else idx.push(a, b, c, a, c, d);
+    };
+    const UP = new THREE.Vector3(0, 1, 0), DN = new THREE.Vector3(0, -1, 0);
+    for (let k = 0; k < N - 1; k++) {
+      const out = new THREE.Vector3(O[k][0] - I[k][0], 0, O[k][1] - I[k][1]);
+      quad(It[k], Ot[k], Ot[k + 1], It[k + 1], UP);                       // seat top
+      quad(Ib[k], Ob[k], Ob[k + 1], Ib[k + 1], DN);                       // underside
+      quad(Ot[k], Ot[k + 1], Ob[k + 1], Ob[k], out);                      // outer wall
+      quad(It[k], It[k + 1], Ib[k + 1], Ib[k], out.clone().negate());     // inner wall
+    }
+    const tan0 = new THREE.Vector3(I[0][0] - I[1][0], 0, I[0][1] - I[1][1]);
+    const tan1 = new THREE.Vector3(I[N - 1][0] - I[N - 2][0], 0, I[N - 1][1] - I[N - 2][1]);
+    quad(It[0], Ot[0], Ob[0], Ib[0], tan0);                                // the two ends
+    quad(It[N - 1], Ot[N - 1], Ob[N - 1], Ib[N - 1], tan1);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, sealMat);
+    mesh.userData.collider = 'proxy';
+    mesh.name = 'bench collider';
+    return mesh;
+  }
+
   // (re)build every collider and every grind edge from the current props
   function rebuild() {
     world.clear();
@@ -448,6 +505,9 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
         p.add(proxy);
       } else if (MODELS[rec.model].pipe) {
         p.add(pipeProxy());
+      } else if (rec.model === 'curve_bridge') {
+        p.traverse(o => { if (o.isMesh && o.userData.collider !== 'proxy') o.userData.noCollide = true; });
+        p.add(benchProxy(baseMinY.curve_bridge));
       }
       for (const s of SEALS[rec.model] || []) {
         const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);

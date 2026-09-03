@@ -52,6 +52,8 @@ const BODY_PROBES = [0.03, 0.08, 0.2, 0.32, 0.44, 0.56, 0.68, 0.8, 0.95, 1.1];  
                                // and probes at the wheels and knees alone passed under/between them
                                // (owner: "never ollied, yet ended up on top of the bench", "I drive
                                // through them")
+const PROP_BUMP = 0.8;         // speed kept when a prop's face knocks the board along itself
+const PROP_GRAZE = 0.7;        // a prop contact with less than this much of the speed into it is a graze (the nose follows the face); more is a stop
 const WALL_EMBED = 0.05;       // m — a face closer than this to the body is pushing INTO it: step out
 const WALL_REACH = 0.14;       // m — keep this much between the board and a wall
 const UP_SMOOTH = 30;          // 1/s — surface normal smoothing over triangulated curves
@@ -60,7 +62,8 @@ const VERT_GUIDE = 2.5;        // 1/s — how firmly a vert air is guided back i
 const VERT_OUT = 0.12;         // m — where a vert air hangs, out from the coping plane (close: the
                                // re-entry meets the face where it is near vertical, little speed lost)
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
-const PIVOT = 0.35;            // fraction of the steer rate available at a standstill (kick-turn)
+const PIVOT = 0.8;             // fraction of the steer rate available at a standstill (kick-turn) — a
+                               // stopped rider turns round in ~2 s, not 4.5 (stuck against a bench)
 // pumping (owner, 2026-09-03): HOLDING the wind-up while riding a transition
 // pumps, up and down alike — the swing trick: the rider works against the
 // extra push of a concave curve. The gain follows the centripetal
@@ -100,6 +103,8 @@ const GRIND_TURN = 10;         // 1/s — how fast the board heading follows a c
 // (owner, 2026-09-03: "the 50-50 does not always hit the trucks", "the board
 // slide often has the actual board go through")
 const BOARD = { hanger: 0.022, deck: 0.094, axleF: 0.208, axleB: 0.278, wheelX: 0.114 };
+const WHEELS = [[BOARD.wheelX, BOARD.axleF], [-BOARD.wheelX, BOARD.axleF], [BOARD.wheelX, -BOARD.axleB], [-BOARD.wheelX, -BOARD.axleB]];
+const _wo = new THREE.Vector3(), _wd = new THREE.Vector3(), _wx = new THREE.Vector3(), _bn = new THREE.Vector3();
 const SLIDE_IN = 0.05;         // m — a ledge slide's deck contact sits this far in from the board's centre
 const GRIND_RECATCH = 0.45;    // s after leaving an edge before the same edge can catch again
 // only the quarter pipes and the halfpipe are transitions (steep faces you
@@ -142,6 +147,7 @@ export class SkatePhysics {
     this.pump = false;                       // the wind-up is held: pump through concave curves
     this.pumpA = 0;                          // m/s² — centripetal acceleration of the path right now (0 in the air / on a flat)
     this._curv = 0;                          // smoothed concave curvature of the path (1/m)
+    this._whit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, object: null, backface: false };   // _wheelSupport's result
     this.airTime = 0;
     this.airSpin = 0;                        // accumulated in-air yaw (180s/360s)
     this.events = [];                        // 'land' events for the anim ctrl
@@ -608,6 +614,37 @@ export class SkatePhysics {
   // reason to leave the ground. A backface of one of OUR closed colliders (a
   // transition proxy) means we are inside it: returned as is with `_inside`
   // set, for the caller to escape.
+  // THE BOARD SPANS A GAP. One ray at the contact point threads the gap
+  // between two slats of a bench seat: the centre found the ground 0.6 m
+  // below the seat and the rider landed under it, inside the bench (owner:
+  // "collision on the curve bench is wonky"). When the centre's surface is a
+  // drop, the four wheels are asked; the highest PROP top under any wheel
+  // within [above, below] of `base` carries the board. The contact stays on
+  // the centre line: `base` projected onto that wheel's plane along `up`.
+  // (Only props: a stair tread or the terrain dropping away is a real step.)
+  _wheelSupport(base, up, above, below) {
+    _wx.crossVectors(up, this.forward);
+    if (_wx.lengthSq() < 1e-6) return null;
+    _wx.normalize();
+    _wd.copy(up).negate();
+    const out = this._whit;
+    let bestD = Infinity;
+    for (let i = 0; i < WHEELS.length; i++) {
+      _wo.copy(base).addScaledVector(_wx, WHEELS[i][0]).addScaledVector(this.forward, WHEELS[i][1]).addScaledVector(up, above);
+      const h = this._groundCast(_wo, _wd, above + below, up, 0.45);
+      if (!h || h.distance >= bestD || !isProp(h.object.userData.collider || '')) continue;
+      bestD = h.distance;
+      out.normal.copy(h.normal); out.object = h.object; out.point.copy(h.point);
+    }
+    if (bestD === Infinity) return null;
+    const denom = up.dot(out.normal);
+    const lift = denom > 0.2 ? ((out.point.x - base.x) * out.normal.x + (out.point.y - base.y) * out.normal.y + (out.point.z - base.z) * out.normal.z) / denom : 0;
+    out.point.copy(base).addScaledVector(up, lift);
+    out.distance = above - lift;
+    out.backface = false;
+    return out;
+  }
+
   _groundCast(origin, dir, far, up, minDot, minYFloor = -1) {
     this._inside = false;
     _po.copy(origin);
@@ -708,10 +745,16 @@ export class SkatePhysics {
         _o.copy(this.pos).addScaledVector(up, BODY_PROBES[k]);
         const hit = this.world.cast(_o, _d, spd * dt + WALL_REACH);
         if (!hit) continue;
-        // a face seen from BEHIND is one we are already past — inside a rail's
-        // post, a bench leg — and cannot be a wall; treating it as one held the
-        // rider inside the post from every side. Walk out through it
-        if (hit.backface) continue;
+        // a face seen from BEHIND right at the body: we are inside this piece
+        // (a rail's post after a drop off the end) — step out THROUGH it and
+        // don't read it as a wall, or its faces hold the rider in from every
+        // side. Further away it is a wall like any other: these meshes are
+        // wound any which way, a bench's outer side reads as a backface from
+        // outside, and skipping it let the rider ride straight through the
+        // seat (owner: "I can still go straight through")
+        if (hit.backface) {
+          if (hit.distance < WALL_EMBED * 1.6) { this.pos.addScaledVector(hit.normal, -(WALL_EMBED * 1.6 - hit.distance)); continue; }
+        }
         const prop = isProp(hit.object.userData.collider || '');
         // wheel height: anything steep is a wall (on a prop, anything steeper
         // than a rideable top). Higher up: a prop's face at any angle is a
@@ -727,7 +770,26 @@ export class SkatePhysics {
           // under it, a side panel — zeroed everything, every frame: the
           // owner's "stuck in the flat rail" and the dead stop at a ramp foot.)
           const into = vel.dot(hit.normal);
-          if (into < 0) vel.addScaledVector(hit.normal, -into * 1.02);
+          _bn.set(hit.normal.x, 0, hit.normal.z);
+          const spd0 = vel.length();
+          const graze = prop && into < 0 && _bn.lengthSq() > 1e-6 && -into < PROP_GRAZE * spd0;
+          if (graze) {
+            // a GRAZE along a prop (a bench's side, a table's edge): the nose
+            // is knocked along the face and the board rides it out with its
+            // speed. Taking only the into-part out left the velocity across
+            // the trucks, which killed it within a few substeps — a bench is
+            // a comb of faces at different angles, and the rider was stuck
+            // against it, every push dying the same way (owner: "collision on
+            // the curve bench is wonky"). Head-on it still stops: a board does
+            // not slide sideways off a bench
+            _bn.normalize();
+            const hx = vel.x, hz = vel.z;                         // heading before
+            vel.addScaledVector(_bn, -vel.dot(_bn));
+            const keep = 1 - (1 - PROP_BUMP) * (-into / Math.max(1e-6, spd0));
+            vel.normalize().multiplyScalar(spd0 * keep);
+            const dyaw = Math.atan2(vel.x, vel.z) - Math.atan2(hx, hz);
+            this._turnForward(Math.atan2(Math.sin(dyaw), Math.cos(dyaw)));
+          } else if (into < 0) vel.addScaledVector(hit.normal, -into * 1.02);
           // embedded in it (the face is right at the body): push out along the
           // face's normal, a little each substep — a rider standing inside a
           // rail's bar or base walks free instead of being held by every probe
@@ -752,6 +814,16 @@ export class SkatePhysics {
         // nothing rideable along our tilt (a wall next to a bank, a step's
         // riser): look straight down
         hit = this._groundCast(_o.copy(this.pos).addScaledVector(WORLD_UP, PROBE_UP), DOWN, PROBE_UP + PROBE_DOWN, up, -1, 0.3);
+      }
+      // the centre's surface is a drop: maybe the ray sits over a gap between
+      // a seat's slats — the wheels decide (see _wheelSupport)
+      if (!this._inside) {
+        const drop = hit ? hit.distance - PROBE_UP : Infinity;
+        if (drop > 0.05) {
+          const w = this._wheelSupport(this.pos, up, PROBE_UP, 0.06);
+          this._inside = false;
+          if (w && w.distance - PROBE_UP < drop - 0.03) hit = w;
+        }
       }
       // (the inside test starts a hair out along the SURFACE normal — straight
       // up from a contact point on a steep face pokes into the ramp itself
@@ -1025,6 +1097,15 @@ export class SkatePhysics {
       // lying on a wall)
       // (steep faces are landings only on transition colliders — a rail's
       // brace or a ledge's wall is not; owner: "rides sideways in strange places")
+      // the centre ray may have threaded a slatted seat and found the ground
+      // under it: a prop top under a wheel, between here and that hit, is
+      // what the board lands on
+      if (hit && !hit.backface) {
+        const inside = this._inside;
+        const w = this._wheelSupport(hit.point, WORLD_UP, 1.3, 0.06);
+        this._inside = inside;
+        if (w && w.point.y > hit.point.y + 0.05 && w.point.y <= this.pos.y + 0.1) hit = w;
+      }
       const landTag = hit ? (hit.object.userData.collider || '') : '';
       const transition = hit && TRANSITION.test(landTag);
       // (a vert air lands steep only on a transition — never on a prop's
