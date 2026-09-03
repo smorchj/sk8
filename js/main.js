@@ -351,13 +351,19 @@ function updateCamera(dt) {
     } else {
       physics.travelDir(_travel);
     }
-    let dy = Math.atan2(_travel.x, _travel.z) - chaseYaw;
-    while (dy > Math.PI) dy -= 2 * Math.PI;
-    while (dy < -Math.PI) dy += 2 * Math.PI;
-    chaseYaw += dy * (1 - Math.exp(-dt * 6));
-    // chest side relative to travel: regular nose-first = right; flips with
-    // stance and with fakie — and it's travel-based, so air spins don't swing it
-    chaseSide = (stance === 'regular' ? -1 : 1) * physics.rollSign;
+    // a grind that ran out of speed on a slope slides BACK down the rail: the
+    // rider does not turn, so neither does the camera (it would read as a
+    // turnaround) — the heading holds until the travel agrees with it again
+    const backSlide = physics.grind && (_travel.x * Math.sin(chaseYaw) + _travel.z * Math.cos(chaseYaw)) < 0;
+    if (!backSlide) {
+      let dy = Math.atan2(_travel.x, _travel.z) - chaseYaw;
+      while (dy > Math.PI) dy -= 2 * Math.PI;
+      while (dy < -Math.PI) dy += 2 * Math.PI;
+      chaseYaw += dy * (1 - Math.exp(-dt * 6));
+      // chest side relative to travel: regular nose-first = right; flips with
+      // stance and with fakie — and it's travel-based, so air spins don't swing it
+      chaseSide = (stance === 'regular' ? -1 : 1) * physics.rollSign;
+    }
   }
   // free-look relaxes back to the chase view — but NEVER while winding up:
   // the camera must hold still from click to release (owner's spec)

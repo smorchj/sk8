@@ -492,14 +492,27 @@ export class SkatePhysics {
 
   _stepGrind(dt) {
     const g = this.grind, dir = g.edge.dir;
-    g.v += -G * dir.y * g.s * dt;                        // an inclined rail speeds/slows you
-    g.v -= GRIND_DRAG * dt;
-    if (g.v < GRIND_MIN_V * 0.5) {                       // stalled: drop off
+    // signed speed along the edge: gravity slows a grind going up a sloped
+    // rail and, past the turnaround, brings it back DOWN the same rail — the
+    // board never drops off just because it ran out of speed on a slope
+    // (owner, 2026-09-03: "grinding upwards and then down again should be
+    // possible; it should not jump off by itself and go through the rail")
+    let w = g.s * g.v;
+    w -= G * dir.y * dt;
+    const drag = GRIND_DRAG * dt;
+    w = Math.abs(w) <= drag ? 0 : w - Math.sign(w) * drag;
+    const level = Math.abs(dir.y) < 0.12;
+    if (level && Math.abs(w) < GRIND_MIN_V * 0.5) {     // stalled on a level rail: drop off
       this._endGrind('stall');
       this._leave();
       return;
     }
-    g.t += g.s * g.v * dt;
+    if (w !== 0 && Math.sign(w) !== g.s) {              // turned round on the slope: now rolling the other way
+      g.s = Math.sign(w);
+      this.rollSign = -this.rollSign;
+    }
+    g.v = Math.abs(w);
+    g.t += w * dt;
     // a chained bend: flow onto the next/previous segment without leaving
     while (g.t > g.edge.len && g.edge.next) { g.t -= g.edge.len; g.edge = g.edge.next; this.surface = g.edge.name; }
     while (g.t < 0 && g.edge.prev) { g.edge = g.edge.prev; g.t += g.edge.len; this.surface = g.edge.name; }
