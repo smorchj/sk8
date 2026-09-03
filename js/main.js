@@ -302,7 +302,15 @@ const recorder = new Recorder({
   getStance: () => stance, setStance, getSkills: () => ({ ...skills }), setSkill,
   fire: (name, args) => actions[name]?.(...args),
   flash,
-  tick: (dt) => tick(dt),
+  tick: (dt, headless) => tick(dt, headless),
+  paint: () => paint(),
+  present: () => {                         // show the physics root as it is (a scrub preview: no simulation)
+    playerRoot.position.copy(physics.pos);
+    playerRoot.quaternion.copy(physics.rootQuat(_rootQ));
+    updateCamera(1 / 30);
+    updateHUD();
+    renderer.render(scene, camera);
+  },
 });
 let lastGesture = '—';
 let lookYaw = 0, lookPitch = 0;
@@ -477,7 +485,9 @@ function updateHUD() {
 document.getElementById('loading').remove();
 const clock = new THREE.Clock();
 
-function tick(dt) {
+// headless = a review seek: physics + the anim state machine only, no rig,
+// IK, camera or grass work (the visuals cannot feed back into the physics)
+function tick(dt, headless = false) {
   if (!recorder.replaying) input.update(dt);      // (a replay sets the channels itself)
   recorder.frame(dt);
   physics.steer = input.steer;
@@ -486,6 +496,7 @@ function tick(dt) {
   physics.update(dt);
 
   const buf = anim.update(dt, input.steer);
+  if (headless) { recorder.replayEnd(); return; }
 
   playerRoot.position.copy(physics.pos);
   playerRoot.quaternion.copy(physics.rootQuat(_rootQ));   // nose along the surface, up = its normal
@@ -508,6 +519,29 @@ function tick(dt) {
 
   if (trickFlashT > 0) { trickFlashT -= dt; if (trickFlashT <= 0) trickEl.classList.remove('show'); }
   recorder.replayEnd();
+}
+
+// the visual half of tick(), with nothing advanced: the pose the anim
+// controller last produced, put on the rig, and the camera snapped to it.
+// A scrub re-simulates headless and ends with ONE of these.
+function paint() {
+  if (!rig) return;
+  playerRoot.position.copy(physics.pos);
+  playerRoot.quaternion.copy(physics.rootQuat(_rootQ));
+  sun.target.position.copy(physics.pos);
+  sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
+  const buf = anim.out;
+  if (buf.board) {
+    boardNode.position.fromArray(buf.board.pos);
+    boardNode.quaternion.fromArray(buf.board.quat);
+  }
+  rig.apply(buf);
+  anim.soleAttach(rig, boardNode, soleData, playerRoot);
+  anim.groundFeetIK(rig, boardNode, soleData);
+  anim.plantPostRig(rig, boardNode, playerRoot);
+  updateCamera(1.0);                 // a big dt: the chase springs land at once
+  updateHUD();
+  renderer.render(scene, camera);
 }
 
 let paused = false;          // SK8.pause(): the live loop only renders; SK8.step() drives time

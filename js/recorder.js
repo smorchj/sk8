@@ -9,9 +9,26 @@
 // brake, reset …) and a compact physics state. The game is deterministic given
 // the layout, stance, skills, the start state and the dt sequence.
 
+const CP_EVERY = 30;              // frames between seek checkpoints: any seek
+                                  // re-simulates at most half a second
+const SCAN_SLICE = 10;            // ms of background scanning per rendered frame
+// anim fields that are STRUCTURE, not state — never snapshotted or restored
+const ANIM_KEEP = new Set(['rig', 'clips', 'grabs', 'phys', 'skel', 'getSkill', 'onTrick',
+  'stance', 'ridePoseClip', '_soleRef', 'boneTest']);
+// deep copy of anim state: vectors cloned, pose buffers (a Map of bone quats)
+// cloned, class instances (clips, poses) kept by reference
+const cloneVal = (v) => {
+  if (v == null || typeof v !== 'object') return v;
+  if (v.isVector3 || v.isQuaternion) return v.clone();
+  if (v instanceof Map) { const m = new Map(); for (const [k, x] of v) m.set(k, Array.isArray(x) ? x.slice() : cloneVal(x)); return m; }
+  if (Array.isArray(v)) return v.map(cloneVal);
+  if (v.constructor === Object) { const o = {}; for (const k of Object.keys(v)) o[k] = cloneVal(v[k]); return o; }
+  return v;
+};
+
 export class Recorder {
-  constructor({ physics, anim, input, park, getStance, setStance, getSkills, setSkill, fire, flash, tick }) {
-    Object.assign(this, { physics, anim, input, park, getStance, setStance, getSkills, setSkill, fire, flash, tick });
+  constructor({ physics, anim, input, park, getStance, setStance, getSkills, setSkill, fire, flash, tick, paint }) {
+    Object.assign(this, { physics, anim, input, park, getStance, setStance, getSkills, setSkill, fire, flash, tick, paint });
     this.frames = [];          // [dt, steer, spin, cbs|0, x, y, z, yaw, vx, vy, vz, upY, grounded, surfId, animId]
     this.tags = [];            // {id, frame, t}
     this.pending = [];         // callbacks fired since the last frame: [name, ...args]
@@ -22,7 +39,9 @@ export class Recorder {
     this.playing = false;
     this.speed = 1;
     this.acc = 0;
-    this.checkpoints = [];     // {i, time, snap} — quiet moments to seek back to
+    this.checkpoints = [];     // sparse, indexed frame/CP_EVERY: {i, time, snap}
+    this.cpCount = 0;
+    this._scan = null;         // the background scan cursor {i, time, snap, ms}
     this.limit = 90000;        // frames (25 min at 60 fps)
     this.panel = null;
     this.saved = false;
@@ -36,7 +55,8 @@ export class Recorder {
     return i;
   }
 
-  _snapshot() {
+  // the recording's START state: flat and JSON-safe (it goes in the file)
+  _startSnapshot() {
     const p = this.physics;
     return {
       pos: p.pos.toArray(), vel: p.vel.toArray(), yaw: p.yaw, up: p.up.toArray(), forward: p.forward.toArray(),
@@ -44,16 +64,61 @@ export class Recorder {
       anim: this.anim.state,
     };
   }
+
+  // a seek checkpoint: EVERYTHING the simulation carries, so restoring it and
+  // running on reproduces the recording exactly — mid-trick, mid-grind, mid-air
+  // (in memory only: the pose buffers hold Maps, which JSON cannot carry)
+  _snapshot() {
+    const p = this.physics, a = this.anim;
+    const anim = {};
+    for (const k of Object.keys(a)) if (!ANIM_KEEP.has(k)) anim[k] = cloneVal(a[k]);
+    return {
+      phys: {
+        pos: p.pos.toArray(), vel: p.vel.toArray(), up: p.up.toArray(), forward: p.forward.toArray(),
+        yaw: p.yaw, rollSign: p.rollSign, grounded: p.grounded, airTime: p.airTime, airSpin: p.airSpin,
+        groundY: p.groundY, surface: p.surface, surfaceFace: p.surfaceFace,
+        steer: p.steer, spin: p.spin, braking: p.braking, pushing: p.pushing, crouch: p.crouch,
+        pump: p.pump, pumpA: p.pumpA, curv: p._curv, steerSm: p._steerSm, turn: p._turn,
+        prevN: p._prevN ? p._prevN.toArray() : null, ignoreT: p._ignoreT,
+        // the park's edges / transition faces are shared and outlive a seek:
+        // kept BY REFERENCE (cloning one would clone its whole chain)
+        vert: p.vert ? { ...p.vert, out: p.vert.out.clone(), lip: p.vert.lip.clone() } : null,
+        grind: p.grind ? { ...p.grind } : null,
+        revert: p.revert ? { ...p.revert } : null,
+        lastEdge: p._lastEdge, ignored: p.world?.ignored || null,
+      },
+      anim,
+    };
+  }
+
   _applySnapshot(s) {
-    const p = this.physics;
-    p.pos.fromArray(s.pos); p.vel.fromArray(s.vel); p.yaw = s.yaw;
-    p.up.fromArray(s.up); p.forward.fromArray(s.forward);
-    p.rollSign = s.rollSign; p.grounded = s.grounded; p.airTime = s.airTime || 0;
-    p.surface = s.surface; p.vert = null; p.grind = null; p.revert = null; p._lastEdge = null;
-    p._steerSm = 0; p._turn = 0; p._prevN = null; p.airSpin = 0; p.braking = false; p.pushing = false; p._ignoreT = 0;
-    p.world?.setIgnored(null);
-    this.anim._toState(s.anim || 'ride');
-    this.anim.trick = null; this.anim._airPending = null; this.anim.wantGrab = null;
+    const p = this.physics, a = this.anim;
+    if (!s.phys) {                       // the flat start state (also older recordings)
+      p.pos.fromArray(s.pos); p.vel.fromArray(s.vel); p.yaw = s.yaw;
+      p.up.fromArray(s.up); p.forward.fromArray(s.forward);
+      p.rollSign = s.rollSign; p.grounded = s.grounded; p.airTime = s.airTime || 0;
+      p.surface = s.surface; p.vert = null; p.grind = null; p.revert = null; p._lastEdge = null;
+      p._steerSm = 0; p._turn = 0; p._prevN = null; p.airSpin = 0; p.braking = false; p.pushing = false; p._ignoreT = 0;
+      p._curv = 0; p.pump = false; p.pumpA = 0;
+      p.world?.setIgnored(null);
+      a._toState(s.anim || 'ride');
+      a.trick = null; a._airPending = null; a.wantGrab = null; a.holding = false;
+      return;
+    }
+    const q = s.phys;
+    p.pos.fromArray(q.pos); p.vel.fromArray(q.vel); p.up.fromArray(q.up); p.forward.fromArray(q.forward);
+    p.yaw = q.yaw; p.rollSign = q.rollSign; p.grounded = q.grounded; p.airTime = q.airTime; p.airSpin = q.airSpin;
+    p.groundY = q.groundY; p.surface = q.surface; p.surfaceFace = q.surfaceFace;
+    p.steer = q.steer; p.spin = q.spin; p.braking = q.braking; p.pushing = q.pushing; p.crouch = q.crouch;
+    p.pump = q.pump; p.pumpA = q.pumpA; p._curv = q.curv; p._steerSm = q.steerSm; p._turn = q.turn;
+    p._ignoreT = q.ignoreT; p._lastEdge = q.lastEdge;
+    if (q.prevN) (p._prevN || (p._prevN = p.pos.clone())).fromArray(q.prevN); else p._prevN = null;
+    p.vert = q.vert ? { ...q.vert, out: q.vert.out.clone(), lip: q.vert.lip.clone() } : null;
+    p.grind = q.grind ? { ...q.grind } : null;
+    p.revert = q.revert ? { ...q.revert } : null;
+    p.world?.setIgnored(q.ignored || null);
+    // clone AGAIN on the way in: a checkpoint may be restored many times
+    for (const k of Object.keys(s.anim)) a[k] = cloneVal(s.anim[k]);
   }
 
   // an input callback fired (between frames)
@@ -65,7 +130,7 @@ export class Recorder {
   // called once per game frame, after the input channels are read
   frame(dt) {
     if (this.replaying) return;
-    if (!this.start) this.start = this._snapshot();
+    if (!this.start) this.start = this._startSnapshot();
     if (this.frames.length >= this.limit) return;
     const p = this.physics;
     this.time += dt;
@@ -128,6 +193,7 @@ export class Recorder {
   }
 
   replayStart(rec) {
+    this.checkpoints = []; this.cpCount = 0; this._scan = null;
     this.input.disabled = true;
     if (rec.layout) this.park.setLayout(rec.layout.map(r => ({ ...r })));
     if (rec.stance) this.setStance(rec.stance);
@@ -171,15 +237,66 @@ export class Recorder {
     }
     r.time += f[0];
     r.i++;
-    const last = this.checkpoints[this.checkpoints.length - 1];
-    if ((!last || r.i - last.i >= 90) && a.state === 'ride' && !a.trick && p.grounded && !p.grind && !p.vert && !p.revert) {
-      this.checkpoints.push({ i: r.i, time: r.time, snap: this._snapshot() });
+    // a checkpoint every CP_EVERY frames, whatever the rider is doing (they
+    // used to be kept only at quiet riding moments, so a long grind or a
+    // pumping run had none and seeking back re-simulated from frame 0 —
+    // owner, 2026-09-03: "the scrolling is so broken, it just freezes")
+    this._mark();
+  }
+
+  // a checkpoint at every CP_EVERY-th frame. They used to be kept only at
+  // quiet riding moments, so a long grind or a pumping run had none and
+  // seeking back re-simulated from frame 0 (owner, 2026-09-03: "the scrolling
+  // is so broken, it just freezes"). Sparse-indexed, so the background scan
+  // and the owner's own playback can lay them in any order.
+  _mark() {
+    const r = this.replaying;
+    if (!r || r.i % CP_EVERY) return;
+    const k = r.i / CP_EVERY;
+    if (!this.checkpoints[k]) { this.checkpoints[k] = { i: r.i, time: r.time, snap: this._snapshot() }; this.cpCount++; }
+  }
+  _nearestCp(frame) {
+    for (let k = Math.floor(frame / CP_EVERY); k >= 0; k--) if (this.checkpoints[k]) return this.checkpoints[k];
+    return null;
+  }
+
+  // The SCAN: one pass over the whole recording, laying the checkpoints, in
+  // slices short enough that the panel stays live. Runs while the review is
+  // paused (playing lays checkpoints by itself). Each slice parks the owner's
+  // own position, runs the scan cursor on, and puts them back — headless, so
+  // no pose, no foot IK, no camera, no render (see tick(dt, headless)).
+  scanStep() {
+    const r = this.replaying, sc = this._scan;
+    if (!r || !sc || this.playing) return;
+    const here = { i: r.i, time: r.time, snap: this._snapshot() };
+    if (sc.i !== r.i) { this._applySnapshot(sc.snap); r.i = sc.i; r.time = sc.time; }
+    const t0 = performance.now();
+    let done = false;
+    while (performance.now() - t0 < SCAN_SLICE) {
+      const rdt = this.replayBegin();
+      if (rdt == null) { done = true; break; }
+      this.tick(rdt, true);
     }
+    sc.ms += performance.now() - t0;
+    sc.i = r.i; sc.time = r.time;
+    if (!done) sc.snap = this._snapshot();
+    this._applySnapshot(here.snap); r.i = here.i; r.time = here.time;
+    const el = this.panel?.querySelector('.recMsg');
+    if (done) {
+      this._scan = null;
+      const msg = r.rec.data.length + ' frames scanned in ' + Math.round(sc.ms) + ' ms — scrubbing is exact everywhere';
+      if (el) el.textContent = msg;
+      console.log('[sk8 rec] ' + msg);
+    } else if (el) {
+      el.textContent = 'scanning ' + Math.round(100 * sc.i / r.rec.data.length) + '% — scrub away, it gets faster as it goes';
+    }
+    this._refresh();
   }
 
   // the live loop, while replaying: play at `speed` (frames per rendered frame)
   advance() {
-    if (!this.replaying || !this.playing) return;
+    if (!this.replaying) return;
+    if (!this.playing) { this.scanStep(); return; }
     this.acc += this.speed;
     while (this.acc >= 1) {
       this.acc -= 1;
@@ -196,9 +313,11 @@ export class Recorder {
     const r = this.replaying;
     if (!r) return;
     frame = Math.max(0, Math.min(r.rec.data.length, Math.round(frame)));
-    if (frame < r.i) {
-      let cp = null;
-      for (const c of this.checkpoints) if (c.i <= frame) cp = c;
+    // start from whichever is nearer the target: where we already are, or the
+    // nearest checkpoint at or before it (a forward jump used to re-simulate
+    // every frame in between — 4.5 s to reach the end of a 20 s recording)
+    const cp = this._nearestCp(frame);
+    if (frame < r.i || (cp && cp.i > r.i)) {
       if (cp) { this._applySnapshot(cp.snap); r.i = cp.i; r.time = cp.time; }
       else { this._applySnapshot(r.rec.start); r.i = 0; r.time = 0; r.divergence = null; }
     }
@@ -206,8 +325,9 @@ export class Recorder {
     while (r.i < frame && guard++ < 200000) {
       const rdt = this.replayBegin();
       if (rdt == null) break;
-      this.tick(rdt);
+      this.tick(rdt, true);          // headless: the pose and camera cost nothing here
     }
+    this.paint?.();                  // one visual update, at the destination
     this._refresh();
   }
 
@@ -222,7 +342,7 @@ export class Recorder {
   // F4: replay the session so far (or a loaded recording) with a scrubbable
   // timeline; N (or the button) tags the moment shown; save writes it out
   review(rec = null) {
-    if (this.replaying) return;
+    if (this.replaying) this.close();     // a second review (or SK8.replay) replaces this one
     if (!rec) {
       if (!this.frames.length) { this.flash?.('nothing recorded yet'); return; }
       rec = this.toJSON();
@@ -233,6 +353,9 @@ export class Recorder {
     this.playing = false;
     this.speed = 1;
     this._panel();
+    this._mark();                                          // the checkpoint at frame 0
+    this._scan = { i: this.replaying.i, time: this.replaying.time, snap: this._snapshot(), ms: 0 };
+    this.paint?.();
     addEventListener('keydown', this._key);
     this._refresh();
     this.flash?.('REVIEW: scrub the timeline, N tags a bug');
@@ -258,6 +381,7 @@ export class Recorder {
 
   close() {
     if (!this.replaying) return;
+    this._scan = null;
     removeEventListener('keydown', this._key);
     this.replayStop();
     this.panel?.remove(); this.panel = null;
@@ -319,10 +443,23 @@ export class Recorder {
       if (a === 'close') this.close();
       if (a === 'untag') this.untag(+b.dataset.id);
     });
+    // dragging the timeline fires pointermove far faster than a seek can run:
+    // keep only the LAST position and seek once per rendered frame
     const bar = d.querySelector('.recBar');
-    const seekAt = (e) => { const rect = bar.getBoundingClientRect(); const u = (e.clientX - rect.left) / rect.width; this.seek(u * this.replaying.rec.data.length); };
-    let drag = false;
-    bar.addEventListener('pointerdown', (e) => { drag = true; this.playing = false; seekAt(e); });
+    let drag = false, want = null, raf = 0;
+    const flush = () => { raf = 0; if (want != null && this.replaying) { const f = want; want = null; this.seek(f); } };
+    const seekAt = (e) => {
+      if (!this.replaying) return;
+      const rect = bar.getBoundingClientRect();
+      const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      want = u * this.replaying.rec.data.length;
+      if (!raf) raf = requestAnimationFrame(flush);
+    };
+    bar.addEventListener('pointerdown', (e) => {
+      drag = true; this.playing = false;
+      try { bar.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
+      seekAt(e);
+    });
     bar.addEventListener('pointermove', (e) => { if (drag) seekAt(e); });
     addEventListener('pointerup', () => { drag = false; });
     this.panel = d;
@@ -340,10 +477,14 @@ export class Recorder {
       ? this.tags.map(t => `<span style="margin-right:6px">#${t.id} ${t.t.toFixed(1)}s <button data-a="untag" data-id="${t.id}" style="padding:0 5px;background:#3a2530;color:#ffb3b3;border:1px solid #6a3540;border-radius:4px;cursor:pointer">×</button></span>`).join('')
       : 'no tags yet';
     const bar = d.querySelector('.recBar');
-    const W = bar.width = bar.clientWidth * (devicePixelRatio || 1), H = bar.height = 28 * (devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(bar.clientWidth * (devicePixelRatio || 1))), h = Math.round(28 * (devicePixelRatio || 1));
+    if (bar.width !== w) bar.width = w;                     // (a resize reallocates the canvas)
+    if (bar.height !== h) bar.height = h;
+    const W = bar.width, H = bar.height;
     const g = bar.getContext('2d');
     g.clearRect(0, 0, W, H);
     g.fillStyle = '#2a3040'; g.fillRect(0, 0, W, H);
+    if (this._scan) { g.fillStyle = '#333c52'; g.fillRect(0, 0, W * (this._scan.i / Math.max(1, n)), H); }
     g.fillStyle = '#3d6dff'; g.fillRect(0, 0, W * (r.i / Math.max(1, n)), H);
     for (const t of this.tags) { const x = W * (t.frame / Math.max(1, n)); g.fillStyle = '#ff5a5a'; g.fillRect(x - 1.5, 0, 3, H); }
     g.fillStyle = '#fff'; g.fillRect(W * (r.i / Math.max(1, n)) - 1, 0, 2, H);
