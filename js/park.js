@@ -106,6 +106,10 @@ export function loadLayout() {
   return DEFAULT_LAYOUT.map(p => ({ ...p }));
 }
 export function saveLayout(props) {
+  // keep the previous layout as a one-step undo (owner, 2026-09-03: a test
+  // overwrote the whole map) — SK8.park.setLayout(JSON.parse(localStorage['sk8layout.prev']).props)
+  const prev = localStorage.getItem(LAYOUT_KEY);
+  if (prev) localStorage.setItem(LAYOUT_KEY + '.prev', prev);
   localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 1, props }));
 }
 
