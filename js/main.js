@@ -21,6 +21,7 @@ import { buildPark } from './park.js';
 import { MapEditor } from './editor.js';
 import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
+import { Recorder } from './recorder.js';
 import { SkateAnim } from './anim.js';
 import { RiderCreator } from './creator.js';
 import { buildSoleData } from './sole.js';
@@ -246,6 +247,7 @@ try {
 const START = { x: 0, z: -16, yaw: 0 };
 const physics = new SkatePhysics(park.world);
 physics.setEdges(park.edges);
+physics.setTransitions(park.transitions);   // coping lines: gap transfers between neighbouring faces
 physics.pos.set(START.x, 0, START.z);
 physics.vel.set(0, 0, 2.0);
 const _rootQ = new THREE.Quaternion();
@@ -259,14 +261,16 @@ anim.onTrick = (label) => {
   trickEl.classList.add('show');
   trickFlashT = 1.2;
 };
+const flash = (label) => { trickEl.textContent = label; trickEl.classList.add('show'); trickFlashT = 1.8; };
 
-const input = new Input({
+// the game actions the input drives — every one of these is recorded (see
+// recorder.js) so a run can be replayed input for input
+const actions = {
   windupStart: () => anim.windupStart(),
   windupEnd: (g) => { lastGesture = g.type; anim.windupEnd(g); },
   push: () => anim.pushStroke(),
   pushStart: () => anim.pushStart(),
   pushEnd: () => anim.pushEnd(),
-  isAirborne: () => !physics.grounded,
   grabStart: () => anim.grabStart('indy'),
   grabEnd: () => anim.grabEnd(),
   manualStart: () => anim.manualStart(),
@@ -279,12 +283,23 @@ const input = new Input({
     physics.pos.set(START.x, 0, START.z); physics.vel.set(0, 0, 2); physics.yaw = START.yaw;
     physics.rollSign = 1; physics.up.set(0, 1, 0); physics.grounded = true;
   },
+};
+const recordedActions = Object.fromEntries(Object.entries(actions).map(([k, f]) => [k, (...a) => { recorder.cb(k, a); return f(...a); }]));
+const input = new Input({
+  ...recordedActions,
+  isAirborne: () => !physics.grounded,
   // free-look: mouse movement while UNCLICKED orbits the chase cam; a held
   // wind-up freezes the camera (owner's spec) — input.js gates this already.
   look: (dx, dy) => {
     lookYaw -= dx * 0.0032;
     lookPitch = Math.max(-0.35, Math.min(0.55, lookPitch + dy * 0.0022));
   },
+});
+const recorder = new Recorder({
+  physics, anim, input, park,
+  getStance: () => stance, setStance, getSkills: () => ({ ...skills }), setSkill,
+  fire: (name, args) => actions[name]?.(...args),
+  flash,
 });
 let lastGesture = '—';
 let lookYaw = 0, lookPitch = 0;
@@ -388,14 +403,18 @@ let camRoll = 0;
 
 const hud = document.getElementById('hud');
 document.getElementById('keys').textContent =
-  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug';
+  'A/D steer (in air: SPIN 180/360)   W push   S brake (double-tap+hold = MANUAL)\nSPACE hold+release ollie\nK kickflip H heelflip I impossible T 360flip\nG (hold, in the air) indy grab\nQ/E revert   C freecam   X slowmo   R reset\nB markers   M map editor   F3 debug\nN tag a bug   F4 save the recording';
 
 // the debug readout is off by default (owner, 2026-09-03); F3 or SK8.hud() shows it
 function showHUD(on = !document.body.classList.contains('debug')) {
   document.body.classList.toggle('debug', on);
 }
 addEventListener('keydown', (e) => {
-  if (e.code === 'F3') { e.preventDefault(); if (!e.repeat) showHUD(); }
+  if (e.code === 'F3') { e.preventDefault(); if (!e.repeat) showHUD(); return; }
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  // bug recording (owner, 2026-09-03): N tags "a bug happened here", F4 saves
+  if (e.code === 'F4') { e.preventDefault(); if (!e.repeat) recorder.save(); }
+  if (e.key.toLowerCase() === 'n' && !e.repeat) recorder.tag();
 });
 
 function updateHUD() {
@@ -416,7 +435,8 @@ document.getElementById('loading').remove();
 const clock = new THREE.Clock();
 
 function tick(dt) {
-  input.update(dt);
+  if (!recorder.replaying) input.update(dt);      // (a replay sets the channels itself)
+  recorder.frame(dt);
   physics.steer = input.steer;
   physics.spin = input.spin || 0;
   physics.update(dt);
@@ -443,6 +463,7 @@ function tick(dt) {
   updateCamera(dt);
 
   if (trickFlashT > 0) { trickFlashT -= dt; if (trickFlashT <= 0) trickEl.classList.remove('show'); }
+  recorder.replayEnd();
 }
 
 let paused = false;          // SK8.pause(): the live loop only renders; SK8.step() drives time
@@ -450,7 +471,10 @@ function frame() {
   requestAnimationFrame(frame);
   let dt = Math.min(clock.getDelta(), 0.05);
   if (slowmo) dt *= 0.25;
-  if (!paused) tick(dt);
+  if (!paused) {
+    if (recorder.replaying) { const rdt = recorder.replayBegin(); if (rdt != null) tick(rdt); }
+    else tick(dt);
+  }
   updateHUD();
   renderer.render(scene, camera);
 }
@@ -469,6 +493,22 @@ window.SK8 = {
   physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill, park, editor,
   pause(on = true) { paused = on; },
   hud(on = true) { showHUD(on); },
+  // bug recordings: SK8.replay('/_scratch/rec-….json') plays it back in the
+  // live loop; SK8.replayTo(frame) steps there at once (pause first to hold)
+  recorder,
+  replay: (src) => recorder.load(src),
+  replayTo(n) {
+    let k = 0;
+    while (recorder.replaying && recorder.replaying.i < n && k++ < 200000) {
+      const rdt = recorder.replayBegin();
+      if (rdt == null) break;
+      tick(rdt);
+    }
+    updateHUD();
+    renderer.render(scene, camera);
+    return recorder.replaying ? { frame: recorder.replaying.i, divergence: recorder.replaying.divergence } : { done: true };
+  },
+  replayStop: () => recorder.replayStop(),
   get anim() { return anim; },
   get rig() { return rig; },
   get clips() { return clips; },

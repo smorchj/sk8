@@ -25,7 +25,7 @@ export const LAYOUT_KEY = 'sk8layout';
 // quarter pipe (profile collider + variants)
 export const MODELS = {
   ramp: { label: 'quarter pipe', scale: 2.6, variants: 7, qp: true },
-  ramp2: { label: 'halfpipe', scale: 6.0 },
+  ramp2: { label: 'halfpipe', scale: 6.0, pipe: true },      // profile collider too (see pipeProxy)
   ramp_haven: { label: 'concrete hip', scale: 5.0, sink: 0.28 },
   grind_rail: { label: 'rail', scale: 1.4 },
   curve_bridge: { label: 'curve bridge', scale: 3.0 },
@@ -190,10 +190,99 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     return prof;
   })();
 
+  // the halfpipe's profile: heights along its local X (deck, transition, flat,
+  // transition, deck) sampled once on the unscaled model. Its visual mesh —
+  // the frame, the railings, the ground slab — never collides (owner,
+  // 2026-09-03: the rider rode its braces sideways and launched off facets).
+  // Measured on the model: the flat/transitions are 0.30 half-wide, the
+  // decks 0.383 from |x| 0.34 out to the ends at |x| 0.5; the slab bottom
+  // is at y −0.394.
+  const PIPE = { halfW: 0.30, deckHalfW: 0.383, deckFrom: 0.34, ground: -0.4 };
+  const pipeProfile = (() => {
+    const ref = base.ramp2.clone();
+    ref.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster();
+    // the ridden surface only: transition → its top plateau (the coping) on
+    // each side. The model's 0.7 m step up to the raised decks is NOT part
+    // of the strip — riding into a vertical strip quad lifted the rider onto
+    // the deck (owner: "it would self-adjust at the top"); the decks are the
+    // seal boxes' tops, their fronts the wall above the plateau
+    const N = 100, prof = [];
+    for (let i = 0; i <= N; i++) {
+      const x = -0.335 + 0.67 * i / N;
+      ray.set(new THREE.Vector3(x, 2, 0), new THREE.Vector3(0, -1, 0));
+      const hit = ray.intersectObject(ref, true)[0];
+      if (hit) prof.push({ x, y: hit.point.y });
+    }
+    return prof;
+  })();
+
   const props = [];
   const edges = [];
+  const transitions = [];                                   // {a, b, out, prop}: coping lines for the gap-transfer assist
   const sealMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
   const panelMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.FrontSide });
+
+  // the halfpipe's collider in its local space: the swept profile (double-
+  // sided: rideable from above, solid from below), back walls under both
+  // deck edges, and one-sided end panels facing outward along both sides —
+  // built exactly under the profile, so nothing invisible hangs over the flat
+  function pipeProxy() {
+    const P = pipeProfile;
+    const hw = (x) => Math.abs(x) >= PIPE.deckFrom ? PIPE.deckHalfW : PIPE.halfW;
+    const ground = PIPE.ground;
+    const pos = [], idx = [];
+    const V = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };
+    // (the profile runs −X → +X, the opposite way to the quarter pipe's, so
+    // the quads are wound the other way round to keep the normals UP — a
+    // downward normal reads as a backface = "inside", and froze the rider)
+    let a = V(P[0].x, P[0].y, -hw(P[0].x)), b = V(P[0].x, P[0].y, hw(P[0].x));
+    for (let i = 1; i < P.length; i++) {
+      const w = hw(P[i].x);
+      const c = V(P[i].x, P[i].y, -w), d = V(P[i].x, P[i].y, w);
+      idx.push(a, b, c, c, b, d);
+      a = c; b = d;
+    }
+    // back walls under both deck edges, normals facing OUT of the pipe
+    for (const [p, outward] of [[P[0], -1], [P[P.length - 1], 1]]) {
+      const w = hw(p.x);
+      const t0 = V(p.x, p.y, -w), t1 = V(p.x, p.y, w), g0 = V(p.x, ground, -w), g1 = V(p.x, ground, w);
+      if (outward < 0) idx.push(t0, g0, t1, t1, g0, g1); else idx.push(t0, t1, g0, g0, t1, g1);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, sealMat);
+    mesh.userData.collider = 'proxy';
+    mesh.name = 'halfpipe collider';
+    const ppos = [], pidx = [];
+    const PV = (x, y, z) => { ppos.push(x, y, z); return ppos.length / 3 - 1; };
+    const tri = (i0, i1, i2, outward) => {
+      const p = (k) => new THREE.Vector3(ppos[k * 3], ppos[k * 3 + 1], ppos[k * 3 + 2]);
+      const n = new THREE.Vector3().subVectors(p(i1), p(i0)).cross(new THREE.Vector3().subVectors(p(i2), p(i0)));
+      if (n.z * outward < 0) pidx.push(i0, i2, i1); else pidx.push(i0, i1, i2);
+    };
+    for (const outward of [-1, 1]) {
+      for (let i = 1; i < P.length; i++) {
+        const z0 = outward * hw(P[i - 1].x), z1 = outward * hw(P[i].x);
+        const a0 = PV(P[i - 1].x, ground, z0), a1 = PV(P[i - 1].x, P[i - 1].y, z0);
+        const b1 = PV(P[i].x, P[i].y, z1), b0 = PV(P[i].x, ground, z1);
+        tri(a0, a1, b1, outward);
+        tri(a0, b1, b0, outward);
+      }
+    }
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.Float32BufferAttribute(ppos, 3));
+    pg.setIndex(pidx);
+    pg.computeVertexNormals();
+    const panels = new THREE.Mesh(pg, panelMat);
+    panels.userData.collider = 'proxy';
+    panels.userData.panel = true;
+    panels.name = 'halfpipe end panels';
+    mesh.add(panels);
+    return mesh;
+  }
 
   function applyVariant(obj, variant) {
     obj.traverse(o => {
@@ -220,7 +309,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     let obj = rec.obj;
     if (!obj) {
       obj = base[rec.model].clone();
-      obj.traverse(o => { if (o.isMesh) o.userData.noCollide = spec.qp; });   // a QP's shell never collides
+      obj.traverse(o => { if (o.isMesh) o.userData.noCollide = !!(spec.qp || spec.pipe); });   // a QP's / the halfpipe's shell never collides: their profile proxies do
       obj.userData.park = rec;
       rec.obj = obj;
       group.add(obj);
@@ -304,6 +393,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       pg.computeVertexNormals();
       const panels = new THREE.Mesh(pg, panelMat);
       panels.userData.collider = 'proxy';
+      panels.userData.panel = true;                             // the physics snaps an air that hits this onto the ramp
       panels.name = 'qp end panels';
       mesh.add(panels);
     }
@@ -325,6 +415,8 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
         // logic launches vert along it even at the ramp's nearly flat foot
         proxy.userData.faceWorld = new THREE.Vector3(1, 0, 0).applyQuaternion(p.quaternion);
         p.add(proxy);
+      } else if (MODELS[rec.model].pipe) {
+        p.add(pipeProxy());
       }
       for (const s of SEALS[rec.model] || []) {
         const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);
@@ -334,6 +426,35 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       }
       p.updateWorldMatrix(true, true);
       world.add(p, rec.model);
+    }
+    // the transitions' coping lines (world), for the physics' gap transfers
+    transitions.length = 0;
+    for (const p of props) {
+      const spec = MODELS[p.userData.park.model];
+      if (spec.qp) {
+        const maxY = Math.max(...rampProfile.map(q => q.y));
+        const cop = rampProfile.find(q => q.y >= maxY - 0.01);          // the first top-height sample from the front
+        transitions.push({
+          a: p.localToWorld(new THREE.Vector3(cop.x, cop.y, -0.5)),
+          b: p.localToWorld(new THREE.Vector3(cop.x, cop.y, 0.5)),
+          out: new THREE.Vector3(1, 0, 0).applyQuaternion(p.quaternion).setY(0).normalize(),
+          prop: p,
+        });
+      } else if (spec.pipe) {
+        for (const sgn of [-1, 1]) {                                    // both transitions of the halfpipe
+          const side = pipeProfile.filter(q => sgn * q.x > 0.15 && Math.abs(q.x) < PIPE.deckFrom);
+          if (!side.length) continue;
+          const top = Math.max(...side.map(q => q.y));
+          const ordered = sgn > 0 ? side : side.slice().reverse();      // from the flat outward
+          const cop = ordered.find(q => q.y >= top - 0.005);
+          transitions.push({
+            a: p.localToWorld(new THREE.Vector3(cop.x, cop.y, -PIPE.halfW)),
+            b: p.localToWorld(new THREE.Vector3(cop.x, cop.y, PIPE.halfW)),
+            out: new THREE.Vector3(-sgn, 0, 0).applyQuaternion(p.quaternion).setY(0).normalize(),
+            prop: p,
+          });
+        }
+      }
     }
     edges.length = 0;
     for (const p of props) {
@@ -395,7 +516,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   group.add(grass.group);
 
   return {
-    group, props, base, world, terrain, edges, variants,
+    group, props, base, world, terrain, edges, transitions, variants,
     placeProp, removeProp, rebuild, setLayout, getLayout,
     update: (dt) => grass.update(dt),
   };

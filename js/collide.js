@@ -17,7 +17,13 @@ export class CollisionWorld {
     this.ignored = null;
     this.ray = new THREE.Raycaster();
     this.ray.firstHitOnly = true;
-    this._hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, object: null };
+    // a small ring of result objects: a caller may hold a hit while it
+    // casts again (the ground probe holds its surface while the inside test
+    // casts upward). One shared object was the self-jump: whatever the
+    // inside test's ray touched overhead — a bench seat, a rail bar, a table
+    // top — replaced the ground hit and the rider was placed on it
+    this._hits = Array.from({ length: 16 }, () => ({ point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, object: null, backface: false }));
+    this._hi = 0;
   }
 
   // temporarily leave one prop (and everything under it) out of the casts —
@@ -61,7 +67,7 @@ export class CollisionWorld {
     const hits = this.ray.intersectObjects(this.active, false);
     if (!hits.length) return null;
     const h = hits[0];
-    const out = this._hit;
+    const out = this._hits[this._hi = (this._hi + 1) % this._hits.length];
     out.point.copy(h.point);
     out.normal.copy(h.face.normal).applyNormalMatrix(_m3.getNormalMatrix(h.object.matrixWorld)).normalize();
     out.backface = out.normal.dot(dir) > 0;      // we hit it from behind = we are inside
@@ -76,6 +82,16 @@ export class CollisionWorld {
   inside(point, up = 3) {
     const h = this.cast(point, UP, up);
     return !!(h && h.backface);
+  }
+
+  // the same, but only for colliders whose tag passes `tagTest` — our own
+  // closed proxies (quarter pipes, the halfpipe). A prop's mesh is an open,
+  // double-sided thing (a bench seat has no underside): its backfaces say
+  // nothing about being inside, and reading them as "inside" teleported the
+  // rider onto the bench
+  insideOf(point, tagTest, up = 3) {
+    const h = this.cast(point, UP, up);
+    return !!(h && h.backface && tagTest(h.object.userData.collider || ''));
   }
 }
 
