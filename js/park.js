@@ -206,6 +206,13 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     });
   }
 
+  // the unscaled models' lowest point: a prop stands on the ground by THIS,
+  // never by a bounding box of the placed object — that box grows once the
+  // rebuild hangs collision proxies/seals under it, and every later
+  // re-placement (a drag, a sink step) would lift the prop by their depth
+  const baseMinY = {};
+  for (const [name, m] of Object.entries(base)) baseMinY[name] = new THREE.Box3().setFromObject(m).min.y;
+
   // place (or re-place) one prop from its placement record
   function placeProp(rec) {
     const spec = MODELS[rec.model];
@@ -220,12 +227,10 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       props.push(obj);
     }
     if (spec.qp) applyVariant(obj, rec.variant || 1);
-    obj.scale.setScalar(rec.scale || spec.scale);
+    const scale = rec.scale || spec.scale;
+    obj.scale.setScalar(scale);
     obj.rotation.set(0, THREE.MathUtils.degToRad(rec.rot || 0), 0);
-    obj.position.set(rec.x, 0, rec.z);
-    obj.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(obj);
-    obj.position.y = heightAt(rec.x, rec.z) - box.min.y - 0.01 - (rec.sink ?? spec.sink ?? 0);
+    obj.position.set(rec.x, heightAt(rec.x, rec.z) - baseMinY[rec.model] * scale - 0.01 - (rec.sink ?? spec.sink ?? 0), rec.z);
     obj.updateMatrixWorld(true);
     return obj;
   }

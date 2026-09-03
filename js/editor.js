@@ -56,7 +56,7 @@ export class MapEditor {
     d.style.cssText = 'position:fixed;top:12px;right:12px;width:260px;max-height:92vh;overflow:auto;background:rgba(18,20,26,.92);color:#e6e9ef;font:13px/1.45 system-ui,sans-serif;padding:12px 14px;border-radius:10px;z-index:30;display:none;box-shadow:0 8px 30px rgba(0,0,0,.4)';
     d.innerHTML = `
       <div style="font-weight:700;font-size:15px;margin-bottom:6px">Map editor <span style="float:right;font-weight:400;color:#8a93a3">M closes</span></div>
-      <div style="color:#aab2c0;margin-bottom:8px">click = select · drag = move · Q/E rotate (Shift 90°) · [ ] scale · Del removes</div>
+      <div style="color:#aab2c0;margin-bottom:8px">click = select · drag = move · Q/E rotate (Shift 90°) · [ ] scale · − / + sink / raise (Shift 20 cm) · Del removes</div>
       <div id="edAdd" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>
       <div id="edSel" style="border-top:1px solid #333a48;padding-top:8px;min-height:24px;color:#aab2c0">nothing selected</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:10px">
@@ -80,6 +80,7 @@ export class MapEditor {
       if (act === 'reset') { this.park.setLayout(DEFAULT_LAYOUT.map(p => ({ ...p }))); this._select(null); this._save(); }
       if (act === 'rot') this._rotate(+b.dataset.v);
       if (act === 'scale') this._scale(+b.dataset.v);
+      if (act === 'sink') this._sink(+b.dataset.v);
       if (act === 'variant') this._variant();
       if (act === 'del') this._delete();
     });
@@ -94,11 +95,12 @@ export class MapEditor {
     const rec = this.selected?.userData.park;
     if (!rec) { sel.innerHTML = '<span style="color:#aab2c0">nothing selected</span>'; return; }
     sel.innerHTML = `<div style="color:#fff;font-weight:600">${MODELS[rec.model].label}${rec.variant ? ' · v' + rec.variant : ''}</div>
-      <div>x ${rec.x.toFixed(2)} z ${rec.z.toFixed(2)} · rot ${Math.round(rec.rot || 0)}° · scale ${(rec.scale).toFixed(2)}</div>
+      <div>x ${rec.x.toFixed(2)} z ${rec.z.toFixed(2)} · rot ${Math.round(rec.rot || 0)}° · scale ${(rec.scale).toFixed(2)} · sink ${(rec.sink || 0).toFixed(2)} m</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
         <button data-act="rot" data-v="-15">⟲ 15°</button><button data-act="rot" data-v="15">⟳ 15°</button>
         <button data-act="rot" data-v="-90">⟲ 90°</button><button data-act="rot" data-v="90">⟳ 90°</button>
         <button data-act="scale" data-v="-0.1">smaller</button><button data-act="scale" data-v="0.1">bigger</button>
+        <button data-act="sink" data-v="0.05">sink 5 cm</button><button data-act="sink" data-v="-0.05">raise 5 cm</button>
         ${MODELS[rec.model].qp ? '<button data-act="variant">next graffiti</button>' : ''}
         <button data-act="del" style="color:#ff9a9a">delete</button>
       </div>`;
@@ -133,6 +135,16 @@ export class MapEditor {
     const rec = this.selected?.userData.park;
     if (!rec) return;
     rec.scale = +Math.max(0.3, Math.min(12, rec.scale + d)).toFixed(2);
+    this.park.placeProp(rec);
+    this._changed();
+  }
+  // vertical offset: how far the prop is pushed into the ground (owner,
+  // 2026-09-03: the halfpipe's base needed to go further down and there was
+  // no way). Positive = lower. Saved with the layout like everything else.
+  _sink(d) {
+    const rec = this.selected?.userData.park;
+    if (!rec) return;
+    rec.sink = +Math.max(-3, Math.min(3, (rec.sink || 0) + d)).toFixed(2);
     this.park.placeProp(rec);
     this._changed();
   }
@@ -224,6 +236,9 @@ export class MapEditor {
     if (k === 'e') this._rotate(e.shiftKey ? 90 : 15);
     if (k === '[') this._scale(-0.1);
     if (k === ']') this._scale(0.1);
+    const step = e.shiftKey ? 0.2 : 0.05;
+    if (k === '-' || k === 'pagedown') this._sink(step);        // lower
+    if (k === '+' || k === '=' || k === 'pageup') this._sink(-step);   // raise
     if (k === 'delete' || k === 'backspace') this._delete();
     if (k === 'escape') this._select(null);
   }
