@@ -28,10 +28,16 @@ export const LAYOUT_KEY = 'sk8layout';
 export const MODELS = {
   ramp: { label: 'quarter pipe', scale: 2.6, variants: 7, qp: true },
   ramp2: { label: 'halfpipe', scale: 6.0, pipe: true },      // profile collider too (see pipeProxy)
-  ramp_haven: { label: 'concrete hip', scale: 5.0, sink: 0.28 },
+  ramp_haven: { label: 'concrete hip', scale: 5.0, sink: 0.28, field: true },
   grind_rail: { label: 'rail', scale: 1.4 },
   curve_bridge: { label: 'curve bridge', scale: 3.0 },
   picnic_table: { label: 'picnic table', scale: 1.0 },
+  // owner's 2026-09-03 Meshy ledge: a concrete block on a slab, scale 4 puts
+  // its top 0.36 m over the slab and the sink buries the slab so only the block
+  // stands proud. SINK IS WORLD METRES and the editor does not rescale it, so
+  // after resizing set sink = 0.072 * scale by hand (scale 4 -> 0.29,
+  // scale 7 -> 0.50) or the slab stands proud again.
+  skate_ledge: { label: 'DIY ledge', scale: 4.0, sink: 0.28 },
 };
 
 // the quarter-pipe model's transition faces its local +X (height-probed);
@@ -47,6 +53,7 @@ export const DEFAULT_LAYOUT = [
   { model: 'grind_rail', x: 7, z: -14, rot: 0, scale: 1.4 },
   { model: 'curve_bridge', x: -9, z: -21, rot: 0, scale: 3.0 },
   { model: 'picnic_table', x: -27, z: 10, rot: 30, scale: 1.0 },
+  { model: 'skate_ledge', x: -5, z: -14, rot: 0, scale: 4.0, sink: 0.28 },
 ];
 
 // grindable edges per model, in the model's local space (probed on the
@@ -85,6 +92,12 @@ const EDGES = {
   // collision mesh 2026-09-03 (cross-scans at ten stations; the top is
   // ~0.9 m wide and the old centreline sat up to 0.12 m off it).
   curve_bridge: [...poly(BENCH_INNER), ...poly(BENCH_OUTER)],
+  // the DIY ledge's block: both long top edges (local y 0.0805, probed
+  // 2026-09-03). The block runs along z over part of its slab only.
+  skate_ledge: [
+    [[-0.192, 0.0805, -0.434], [-0.192, 0.0805, 0.182], 'ledge'],
+    [[-0.106, 0.0805, -0.434], [-0.106, 0.0805, 0.182], 'ledge'],
+  ],
   // (corners re-probed 2026-09-03 with the board's real contact geometry: the
   // rim's corner is at local z −0.278 and its bank crest is a straight line
   // that reaches the top at |x| 0.33, not 0.3 — the old line sagged 7 cm)
@@ -112,6 +125,13 @@ const SOLIDS = {
     { x: [-0.95, 0.95], y: [0, 0.08], z: [-0.07, 0.07] },      // the base strip along its length (a curb)
     { x: [-0.88, -0.82], y: [0, 0.24], z: [-0.03, 0.03] },     // the posts
     { x: [0.82, 0.88], y: [0, 0.24], z: [-0.03, 0.03] },
+  ],
+  // the DIY ledge (floor = local y -0.082): the slab, the concrete block and
+  // the wooden frame that runs along the slab's other side
+  skate_ledge: [
+    { x: [-0.195, 0.197], y: [0, 0.072], z: [-0.5, 0.5] },      // the slab (sunk flush with the ground)
+    { x: [-0.195, -0.103], y: [0, 0.1625], z: [-0.434, 0.182] }, // the block, solid to the ground
+    { x: [0.146, 0.178], y: [0, 0.1335], z: [-0.40, 0.19] },     // the wooden side frame
   ],
 };
 // the halfpipe is an open shell: seal boxes under its decks (local space)
@@ -169,12 +189,15 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   const groundTex = {
     grass: await tex('grass', true), grassN: await tex('grass_soft_n', false),
     concrete: await tex('concrete', true), concreteN: await tex('concrete_n', false),
+    // the owner's height map and the normal baked from it — both register
+    // pixel for pixel with concrete.jpg (tools/park-height.mjs)
+    concreteH: await tex('concrete_h', false), concreteHN: await tex('concrete_hn', false),
     asphalt: await tex('asphalt', true), asphaltN: await tex('asphalt_n', false),
   };
   const terrain = makeTerrain(groundTex);
   group.add(terrain);
   const stairMat = new THREE.MeshStandardMaterial({
-    map: groundTex.concrete.clone(), normalMap: groundTex.concreteN.clone(), roughness: 0.9, metalness: 0, color: 0xc9c8c0,
+    map: groundTex.concrete.clone(), normalMap: groundTex.concreteHN.clone(), roughness: 0.9, metalness: 0, color: 0xc9c8c0,
   });
   stairMat.map.repeat.set(4.8 / TILE.concrete[0], 1.6 / TILE.concrete[1]);
   stairMat.normalMap.repeat.copy(stairMat.map.repeat);
@@ -512,10 +535,12 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   // front ledge, the sides as steep facets down to the floor. No Meshy seams
   // or thin faces. Its grind edges were probed on the mesh and match this
   // within a sample. Built once, shared by every placed hip.
-  let hipGeo = null;
-  function hipProxy() {
-    if (!hipGeo) {
-      const src = base.ramp_haven;
+  // a prop whose shape is past boxes collides as a HEIGHT FIELD sampled off
+  // its own model (the hip)
+  const fieldGeo = {};
+  function fieldProxy(name) {
+    if (!fieldGeo[name]) {
+      const src = base[name];
       src.updateWorldMatrix(true, true);
       src.traverse(o => { if (o.isMesh && o.geometry && !o.geometry.boundsTree) o.geometry.boundsTree = new MeshBVH(o.geometry); });
       const bb = new THREE.Box3().setFromObject(src);
@@ -537,15 +562,16 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
         const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
         idx.push(a, c, b, b, c, d);                          // wound for +Y normals
       }
-      hipGeo = new THREE.BufferGeometry();
-      hipGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      hipGeo.setIndex(idx);
-      hipGeo.computeVertexNormals();
-      console.log(`[park] hip collider: ${nx}x${nz} samples, ${idx.length / 3} tris`);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      fieldGeo[name] = g;
+      console.log(`[park] ${name} field collider: ${nx}x${nz} samples, ${idx.length / 3} tris`);
     }
-    const m = new THREE.Mesh(hipGeo, sealMat);
+    const m = new THREE.Mesh(fieldGeo[name], sealMat);
     m.userData.collider = 'proxy'; m.userData.proxy = true;
-    m.name = 'hip collider';
+    m.name = name + ' field collider';
     return m;
   }
 
@@ -573,13 +599,17 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
         p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
         p.add(benchProxy(baseMinY.curve_bridge));
       }
-      if (rec.model === 'ramp_haven') {
+      if (MODELS[rec.model].field) {
         p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
-        p.add(hipProxy());
+        p.add(fieldProxy(rec.model));
       }
       if (SOLIDS[rec.model]) {
         p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
-        const floor = baseMinY[rec.model] + 0.01;
+        // the 1 cm lift matches placeProp's 1 cm drop, so a solid's floor lands
+        // exactly on the ground — but it is a LOCAL offset under a scaled prop, so
+        // it has to be divided by the scale or a big prop floats (the 4x ledge sat
+        // 3 cm high)
+        const floor = baseMinY[rec.model] + 0.01 / (rec.scale || MODELS[rec.model].scale);
         for (const b of SOLIDS[rec.model]) {
           const m = new THREE.Mesh(new THREE.BoxGeometry(b.x[1] - b.x[0], b.y[1] - b.y[0], b.z[1] - b.z[0]), sealMat);
           m.position.set((b.x[0] + b.x[1]) / 2, floor + (b.y[0] + b.y[1]) / 2, (b.z[0] + b.z[1]) / 2);
@@ -688,6 +718,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
 
   return {
     group, props, base, world, terrain, edges, transitions, variants,
+    ground: terrain.material.userData.ground,        // SK8.park.ground.set({ depth, fillEdge, … })
     placeProp, removeProp, rebuild, setLayout, getLayout,
     update: (dt) => grass.update(dt),
   };

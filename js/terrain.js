@@ -1,9 +1,10 @@
 // terrain.js — the park ground as ONE mesh with two levels (owner's reference:
 // a raised concrete pad with a staircase down to the street slab), a grass
 // bank between them, small undulations on the grass, and a blended ground
-// shader: grass / cracked concrete / asphalt feathered by noise, grass
-// showing through the concrete's cracks near the edges (the cracks come from
-// the concrete NORMAL map). The stairs are separate concrete boxes.
+// shader: grass / cracked concrete / asphalt feathered by noise, with the
+// paving's joints given real depth and grass growing up out of them — both
+// read off the owner's concrete HEIGHT map, which registers pixel for pixel
+// with the concrete albedo. The stairs are separate concrete boxes.
 
 import * as THREE from 'three';
 
@@ -100,72 +101,141 @@ float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { v += a 
 float rectSdf(vec2 p, vec4 r){ vec2 d = abs(p - r.xy) - r.zw; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
 `;
 
+// how the paving reads — the owner's height map (assets/park/textures/
+// concrete_h.jpg) drives BOTH the relief and the grass line, so the joints that
+// are dark in the albedo are the joints that sink and the joints grass grows
+// out of. Live-tunable: SK8.park.ground.set({ depth: 0.05 }).
+export const GROUND = {
+  depth: 0.035,               // how deep the joints read, in metres
+  fadeNear: 16, fadeFar: 44,  // the relief fades out over this distance (m)
+  fillFar: 0.06,              // grass level out on the open paving (height units)
+  fillEdge: 0.82,             // grass level right at the paving's edge
+  fillReach: 4.5,             // how far in from the edge the level falls back (m)
+  fillNoise: 0.16,            // the waterline wanders instead of running level
+  soft: 0.07,                 // softness of the grass/concrete line, in height units
+  crackAO: 0.55,              // how dark a deep joint goes
+};
+
 // the blended ground material (MeshStandardMaterial + custom layer blend)
 export function makeGroundMaterial(tex) {
   const rectsC = RECTS.concrete.map(r => new THREE.Vector4(r.x, r.z, r.hw, r.hd));
   const rectsA = RECTS.asphalt.map(r => new THREE.Vector4(r.x, r.z, r.hw, r.hd));
+  const u = {
+    tGrass: { value: tex.grass }, tGrassN: { value: tex.grassN },
+    tConcrete: { value: tex.concrete }, tConcreteN: { value: tex.concreteHN },
+    tConcreteH: { value: tex.concreteH },
+    tAsphalt: { value: tex.asphalt }, tAsphaltN: { value: tex.asphaltN },
+    tileG: { value: new THREE.Vector2(...TILE.grass) },
+    tileC: { value: new THREE.Vector2(...TILE.concrete) },
+    tileA: { value: new THREE.Vector2(...TILE.asphalt) },
+    rectsC: { value: rectsC }, rectsA: { value: rectsA },
+    uDepth: { value: GROUND.depth },
+    uFade: { value: new THREE.Vector2(GROUND.fadeNear, GROUND.fadeFar) },
+    uFill: { value: new THREE.Vector4(GROUND.fillFar, GROUND.fillEdge, GROUND.fillReach, GROUND.fillNoise) },
+    uSoft: { value: GROUND.soft },
+    uCrackAO: { value: GROUND.crackAO },
+  };
   const mat = new THREE.MeshStandardMaterial({
-    map: tex.grass, normalMap: tex.concreteN, roughness: 0.93, metalness: 0,
+    map: tex.grass, normalMap: tex.concreteHN, roughness: 0.93, metalness: 0,
   });
   mat.normalScale.set(1.0, 1.0);
   mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, {
-      tGrass: { value: tex.grass }, tGrassN: { value: tex.grassN },
-      tConcrete: { value: tex.concrete }, tConcreteN: { value: tex.concreteN },
-      tAsphalt: { value: tex.asphalt }, tAsphaltN: { value: tex.asphaltN },
-      tileG: { value: new THREE.Vector2(...TILE.grass) },
-      tileC: { value: new THREE.Vector2(...TILE.concrete) },
-      tileA: { value: new THREE.Vector2(...TILE.asphalt) },
-      rectsC: { value: rectsC }, rectsA: { value: rectsA },
-    });
+    Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vWorldPos;
-        uniform sampler2D tGrass, tGrassN, tConcrete, tConcreteN, tAsphalt, tAsphaltN;
-        uniform vec2 tileG, tileC, tileA;
+        uniform sampler2D tGrass, tGrassN, tConcrete, tConcreteN, tConcreteH, tAsphalt, tAsphaltN;
+        uniform vec2 tileG, tileC, tileA, uFade;
+        uniform vec4 uFill;
+        uniform float uDepth, uSoft, uCrackAO;
         uniform vec4 rectsC[${rectsC.length}];
         uniform vec4 rectsA[${rectsA.length}];
         ${GLSL_NOISE}
-        // layer weights: x = concrete, y = asphalt (grass is the rest)
-        vec2 groundMasks(vec2 p, float crack) {
+        // The paving is flat (pavedMask keeps the undulation off it), so the eye
+        // ray can be marched straight against the world y plane — no tangent
+        // frame needed. Returns the uv the eye really lands on once the joints
+        // have their depth; height 0 = deep joint, 1 = tile top.
+        vec2 parallaxUv(vec2 uv0, vec3 V, float depth) {
+          vec2 duvAll = (-V.xz / max(V.y, 0.30)) * depth / tileC;   // uv crossed over the full depth
+          float layers = mix(6.0, 16.0, clamp(1.0 - V.y, 0.0, 1.0)); // more steps the flatter we look
+          float dz = 1.0 / layers;
+          vec2 duv = duvAll * dz, uv = uv0, prevUv = uv0;
+          float t = 0.0, d = 1.0 - texture2D(tConcreteH, uv0).r, pt = 0.0, pd = d;
+          for (int i = 0; i < 16; i++) {
+            if (float(i) >= layers || d <= t) break;
+            pt = t; pd = d; prevUv = uv;
+            t += dz; uv += duv;
+            d = 1.0 - texture2D(tConcreteH, uv).r;
+          }
+          float a = d - t, b = pd - pt;                    // a <= 0 < b at the crossing
+          return mix(uv, prevUv, clamp(a / min(a - b, -1e-5), 0.0, 1.0));
+        }
+        // layer weights: x = concrete, y = asphalt, z = paving cover before the
+        // grass line (the joints keep their groove and their shade under grass)
+        vec3 groundMasks(vec2 p, float h) {
           float sdC = 1e9; for (int i = 0; i < ${rectsC.length}; i++) sdC = min(sdC, rectSdf(p, rectsC[i]));
           float sdA = 1e9; for (int i = 0; i < ${rectsA.length}; i++) sdA = min(sdA, rectSdf(p, rectsA[i]));
           float n = (fbm(p * 0.35) - 0.5) * 2.2;                    // natural wobble of the edge
-          float mC = 1.0 - smoothstep(-0.9, 0.9, sdC + n);
+          float cover = 1.0 - smoothstep(-0.9, 0.9, sdC + n);
           float mA = 1.0 - smoothstep(-0.9, 0.9, sdA + n);
-          // grass through the cracks, strongest near the edges
-          float edgeC = 1.0 - smoothstep(-3.5, 0.6, sdC + n * 0.5);
-          mC *= 1.0 - crack * edgeC * 0.95;
+          // Grass rises into the paving like water: it fills the joints first
+          // and only reaches the tile tops at the very edge, so the boundary
+          // runs along the cracks instead of across a straight noise line.
+          float edge = smoothstep(-uFill.z, 0.2, sdC + n * 0.5);
+          float level = mix(uFill.x, uFill.y, edge) + (fbm(p * 0.8) - 0.5) * uFill.w;
+          float mC = cover * smoothstep(level - uSoft, level + uSoft, h);
           mA *= 1.0 - mC;
-          return vec2(mC, mA);
+          return vec3(mC, mA, cover);
         }`)
       .replace('#include <map_fragment>', `
         vec2 p = vWorldPos.xz;
-        vec2 uvG = p / tileG, uvC = p / tileC, uvA = p / tileA;
-        vec3 nC = texture2D(tConcreteN, uvC).xyz * 2.0 - 1.0;
-        float crack = smoothstep(0.22, 0.55, length(nC.xy));
-        vec2 mk = groundMasks(p, crack);
+        vec3 Vw = cameraPosition - vWorldPos;
+        float viewDist = length(Vw);
+        Vw /= max(viewDist, 1e-4);
+        vec2 uvG = p / tileG, uvA = p / tileA, uvC = p / tileC;
+        float relief = uDepth * (1.0 - smoothstep(uFade.x, uFade.y, viewDist));
+        if (relief > 0.0004) uvC = parallaxUv(uvC, Vw, relief);     // the joints sink
+        float hC = texture2D(tConcreteH, uvC).r;
+        vec3 mk = groundMasks(p, hC);
         vec3 cG = texture2D(tGrass, uvG).rgb;
         cG *= 0.82 + 0.36 * fbm(p * 0.03);                         // breaks the tiling
         vec3 cC = texture2D(tConcrete, uvC).rgb * 0.92;
         vec3 cA = texture2D(tAsphalt, uvA).rgb;
         vec3 albedo = mix(mix(cG, cC, mk.x), cA, mk.y);
+        // a joint sits in its own shade — the grass that filled it does too
+        albedo *= mix(1.0, mix(uCrackAO, 1.0, smoothstep(0.0, 0.5, hC)), mk.z);
         diffuseColor.rgb *= albedo;
         float slope = 1.0 - clamp(normalize(vNormal).y, 0.0, 1.0);
         diffuseColor.rgb *= 1.0 - 0.15 * slope;`)
       .replace('#include <normal_fragment_maps>', `
+        vec3 nC = texture2D(tConcreteN, uvC).xyz * 2.0 - 1.0;
         vec3 nG = texture2D(tGrassN, uvG).xyz * 2.0 - 1.0;
         vec3 nA = texture2D(tAsphaltN, uvA).xyz * 2.0 - 1.0;
-        vec3 mapN = normalize(mix(mix(nG * vec3(0.6, 0.6, 1.0), nC, mk.x), nA * vec3(0.7, 0.7, 1.0), mk.y));
+        // blended on the paving's COVER, not on the grass line: a joint is a
+        // groove whatever grows in it
+        vec3 mapN = normalize(mix(mix(nG * vec3(0.6, 0.6, 1.0), nC, mk.z), nA * vec3(0.7, 0.7, 1.0), mk.y));
         mapN.xy *= normalScale;
         normal = normalize(tbn * mapN);`)
       .replace('#include <roughnessmap_fragment>', `
-        float roughnessFactor = mix(0.96, 0.88, mk.x);`);
+        float roughnessFactor = mix(0.96, mix(0.95, 0.86, smoothstep(0.25, 0.62, hC)), mk.x);`);
   };
   mat.customProgramCacheKey = () => 'sk8-ground';
+  // live tuning (LAW ZERO: we look at the render while we turn the knobs)
+  mat.userData.ground = {
+    get: () => ({ ...GROUND }),
+    set(o) {
+      Object.assign(GROUND, o);
+      u.uDepth.value = GROUND.depth;
+      u.uFade.value.set(GROUND.fadeNear, GROUND.fadeFar);
+      u.uFill.value.set(GROUND.fillFar, GROUND.fillEdge, GROUND.fillReach, GROUND.fillNoise);
+      u.uSoft.value = GROUND.soft;
+      u.uCrackAO.value = GROUND.crackAO;
+      return { ...GROUND };
+    },
+  };
   return mat;
 }
 
