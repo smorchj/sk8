@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { buildGrass } from './grass.js';
 import { CollisionWorld } from './collide.js';
+import { MeshBVH } from 'three-mesh-bvh';
 import { makeTerrain, makeStairs, heightAt, pavedMask, TILE } from './terrain.js';
 import { buildStairRails } from './rails.js';
 
@@ -281,7 +282,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, sealMat);
-    mesh.userData.collider = 'proxy';
+    mesh.userData.collider = 'proxy'; mesh.userData.proxy = true;
     mesh.name = 'halfpipe collider';
     const ppos = [], pidx = [];
     const PV = (x, y, z) => { ppos.push(x, y, z); return ppos.length / 3 - 1; };
@@ -304,7 +305,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     pg.setIndex(pidx);
     pg.computeVertexNormals();
     const panels = new THREE.Mesh(pg, panelMat);
-    panels.userData.collider = 'proxy';
+    panels.userData.collider = 'proxy'; panels.userData.proxy = true;
     panels.userData.panel = true;
     panels.name = 'halfpipe end panels';
     mesh.add(panels);
@@ -411,7 +412,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, sealMat);
-    mesh.userData.collider = 'proxy';
+    mesh.userData.collider = 'proxy'; mesh.userData.proxy = true;
     mesh.name = 'qp collider';
     // end panels: ONE-SIDED, facing outward — they stop a rider coming at the
     // ramp's side from the ground, but never hold a rider in from inside
@@ -441,7 +442,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       pg.setIndex(pidx);
       pg.computeVertexNormals();
       const panels = new THREE.Mesh(pg, panelMat);
-      panels.userData.collider = 'proxy';
+      panels.userData.collider = 'proxy'; panels.userData.proxy = true;
       panels.userData.panel = true;                             // the physics snaps an air that hits this onto the ramp
       panels.name = 'qp end panels';
       mesh.add(panels);
@@ -500,9 +501,52 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, sealMat);
-    mesh.userData.collider = 'proxy';
+    mesh.userData.collider = 'proxy'; mesh.userData.proxy = true;
     mesh.name = 'bench collider';
     return mesh;
+  }
+
+  // THE HIP COLLIDES AS A HEIGHT FIELD (owner, 2026-09-03: "do the hip as
+  // well"): its top surface sampled on the model every 2 cm (10 cm at the
+  // placed scale) and rebuilt as a clean grid — the banks, the plateau, the
+  // front ledge, the sides as steep facets down to the floor. No Meshy seams
+  // or thin faces. Its grind edges were probed on the mesh and match this
+  // within a sample. Built once, shared by every placed hip.
+  let hipGeo = null;
+  function hipProxy() {
+    if (!hipGeo) {
+      const src = base.ramp_haven;
+      src.updateWorldMatrix(true, true);
+      src.traverse(o => { if (o.isMesh && o.geometry && !o.geometry.boundsTree) o.geometry.boundsTree = new MeshBVH(o.geometry); });
+      const bb = new THREE.Box3().setFromObject(src);
+      const step = 0.02, floor = bb.min.y - 0.02;
+      const nx = Math.ceil((bb.max.x - bb.min.x) / step) + 3, nz = Math.ceil((bb.max.z - bb.min.z) / step) + 3;
+      const x0 = bb.min.x - step, z0 = bb.min.z - step;
+      const ray = new THREE.Raycaster();
+      ray.firstHitOnly = true;
+      const from = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0);
+      const pos = [];
+      for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+        const x = x0 + i * step, z = z0 + j * step;
+        ray.set(from.set(x, bb.max.y + 1, z), down);
+        const h = ray.intersectObject(src, true)[0];
+        pos.push(x, h ? h.point.y : floor, z);
+      }
+      const idx = [];
+      for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
+        const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+        idx.push(a, c, b, b, c, d);                          // wound for +Y normals
+      }
+      hipGeo = new THREE.BufferGeometry();
+      hipGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      hipGeo.setIndex(idx);
+      hipGeo.computeVertexNormals();
+      console.log(`[park] hip collider: ${nx}x${nz} samples, ${idx.length / 3} tris`);
+    }
+    const m = new THREE.Mesh(hipGeo, sealMat);
+    m.userData.collider = 'proxy'; m.userData.proxy = true;
+    m.name = 'hip collider';
+    return m;
   }
 
   // (re)build every collider and every grind edge from the current props
@@ -513,7 +557,9 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     world.add(stairRails.group, 'stair_rail');
     for (const p of props) {
       // drop old proxies/seals
-      for (const c of [...p.children]) if (c.userData.collider === 'proxy') p.remove(c);
+      // (by the flag: world.add renames a proxy's collider tag to the prop's
+      // model, so the old test missed them and every rebuild stacked another)
+      for (const c of [...p.children]) if (c.userData.proxy) p.remove(c);
       const rec = p.userData.park;
       if (MODELS[rec.model].qp) {
         const proxy = rampProxy(p);
@@ -524,16 +570,20 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       } else if (MODELS[rec.model].pipe) {
         p.add(pipeProxy());
       } else if (rec.model === 'curve_bridge') {
-        p.traverse(o => { if (o.isMesh && o.userData.collider !== 'proxy') o.userData.noCollide = true; });
+        p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
         p.add(benchProxy(baseMinY.curve_bridge));
       }
+      if (rec.model === 'ramp_haven') {
+        p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
+        p.add(hipProxy());
+      }
       if (SOLIDS[rec.model]) {
-        p.traverse(o => { if (o.isMesh && o.userData.collider !== 'proxy') o.userData.noCollide = true; });
+        p.traverse(o => { if (o.isMesh && !o.userData.proxy) o.userData.noCollide = true; });
         const floor = baseMinY[rec.model] + 0.01;
         for (const b of SOLIDS[rec.model]) {
           const m = new THREE.Mesh(new THREE.BoxGeometry(b.x[1] - b.x[0], b.y[1] - b.y[0], b.z[1] - b.z[0]), sealMat);
           m.position.set((b.x[0] + b.x[1]) / 2, floor + (b.y[0] + b.y[1]) / 2, (b.z[0] + b.z[1]) / 2);
-          m.userData.collider = 'proxy';
+          m.userData.collider = 'proxy'; m.userData.proxy = true;
           m.name = rec.model + ' solid';
           p.add(m);
         }
@@ -541,7 +591,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       for (const s of SEALS[rec.model] || []) {
         const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);
         b.position.set((s.x[0] + s.x[1]) / 2, (s.y[0] + s.y[1]) / 2, (s.z[0] + s.z[1]) / 2);
-        b.userData.collider = 'proxy';
+        b.userData.collider = 'proxy'; b.userData.proxy = true;
         p.add(b);
       }
       p.updateWorldMatrix(true, true);
