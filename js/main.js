@@ -401,8 +401,10 @@ function updateCamera(dt) {
   // rider and the camera, the camera comes in along its own arm to just in
   // front of what blocks it, and looks up at the rider from there. Nothing
   // else — no lifting, no top-down (owner, 2026-09-03)
-  springArm(lookTarget, camPos);
-  camera.position.copy(camPos);
+  // the boom (camPos) is never shortened itself — the arm only decides how
+  // much of it the camera uses this frame, or shortening feeds back and the
+  // camera converges onto the rider
+  camera.position.copy(springArm(camPos, dt));
   camLook.lerp(lookTarget, 1 - Math.exp(-dt * 5.5));
   camera.lookAt(camLook);
   // carve roll + speed FOV breathing
@@ -417,15 +419,30 @@ function updateCamera(dt) {
 const _lookDir = new THREE.Vector3();
 let chaseYaw = 0, chaseSide = 1;          // the chase heading / chest side, frozen in the air
 const _camDir = new THREE.Vector3(), _camEye = new THREE.Vector3();
-const CAM_MARGIN = 0.3, CAM_MIN = 0.5;
-function springArm(target, pos) {
+const CAM_MARGIN = 0.3, CAM_MIN = 1.0;
+const ARM_HOLD = 0.4;                      // s the ray must stay clear before the arm lets out again
+const ARM_OUT = 2.5;                       // 1/s — how fast it lets out then
+let armFrac = 1, armClearT = 1;            // the arm's length as a fraction of the wanted one; time the ray has been clear
+// the spring arm, with the lag every game gives it: it comes IN the instant
+// something is between the rider and the camera, and only lets back OUT once
+// the ray has stayed clear for a while. Without that it let out the moment a
+// ray was clear and snapped in again a few frames later, all the way down a
+// ramp — the owner's "camera jitter" (a 0.9→1.26 m sawtooth every 6 frames)
+const _camOut = new THREE.Vector3();
+function springArm(boom, dt) {
   _camEye.copy(physics.pos).y += 0.9;                     // the rider's chest
-  _camDir.subVectors(pos, _camEye);
+  _camDir.subVectors(boom, _camEye);
   const d = _camDir.length();
-  if (d < 1e-3) return;
+  if (d < 1e-3) return _camOut.copy(boom);
   _camDir.multiplyScalar(1 / d);
   const hit = park.world.cast(_camEye, _camDir, d);
-  if (hit) pos.copy(_camEye).addScaledVector(_camDir, Math.max(CAM_MIN, hit.distance - CAM_MARGIN));
+  const allowed = hit ? Math.min(1, Math.max(CAM_MIN, hit.distance - CAM_MARGIN) / d) : 1;
+  if (allowed < armFrac) { armFrac = allowed; armClearT = 0; }
+  else {
+    armClearT += dt;
+    if (armClearT > ARM_HOLD) armFrac += (allowed - armFrac) * (1 - Math.exp(-dt * ARM_OUT));
+  }
+  return _camOut.copy(_camEye).addScaledVector(_camDir, d * armFrac);
 }
 const _sideDir = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
