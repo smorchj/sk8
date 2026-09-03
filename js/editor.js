@@ -57,6 +57,7 @@ export class MapEditor {
     d.innerHTML = `
       <div style="font-weight:700;font-size:15px;margin-bottom:6px">Map editor <span style="float:right;font-weight:400;color:#8a93a3">M closes</span></div>
       <div style="color:#aab2c0;margin-bottom:8px">click = select · drag = move · Q/E rotate (Shift 90°) · [ ] scale · − / + sink / raise (Shift 20 cm) · Del removes</div>
+      <div style="color:#fff;font-weight:600;margin:6px 0 4px">Add an asset (appears in front of the rider, selected — drag it where you want):</div>
       <div id="edAdd" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>
       <div id="edSel" style="border-top:1px solid #333a48;padding-top:8px;min-height:24px;color:#aab2c0">nothing selected</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:10px">
@@ -111,8 +112,12 @@ export class MapEditor {
   // ── edits ────────────────────────────────────────────────────────────────
   _add(model) {
     const spec = MODELS[model];
+    // a few metres from the rider toward the camera, so the new piece is in
+    // view and not on top of them
     const t = this.controls.target;
-    const rec = { model, x: +t.x.toFixed(2), z: +t.z.toFixed(2), rot: 0, scale: spec.scale, sink: spec.sink || 0 };
+    const dx = this.camera.position.x - t.x, dz = this.camera.position.z - t.z;
+    const l = Math.hypot(dx, dz) || 1;
+    const rec = { model, x: +(t.x + dx / l * 4).toFixed(2), z: +(t.z + dz / l * 4).toFixed(2), rot: 0, scale: spec.scale, sink: spec.sink || 0 };
     if (spec.qp) rec.variant = 1 + Math.floor(Math.random() * spec.variants);
     const obj = this.park.placeProp(rec);
     this._select(obj);
