@@ -6,7 +6,8 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["serve.mjs"],
       "port": 5101,
-      "url": "http://127.0.0.1:5101"
+      "url": "http://127.0.0.1:5101",
+      "autoPort": false
     }
   ]
 }
