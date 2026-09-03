@@ -443,6 +443,7 @@ function tick(dt) {
   recorder.frame(dt);
   physics.steer = input.steer;
   physics.spin = input.spin || 0;
+  physics.pump = anim.holding && anim.state === 'windup';   // the held wind-up pumps a transition (anim state: replays match)
   physics.update(dt);
 
   const buf = anim.update(dt, input.steer);

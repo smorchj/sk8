@@ -56,6 +56,14 @@ const VERT_GUIDE = 2.5;        // 1/s — how firmly a vert air is guided back i
 const VERT_OUT = 0.22;         // m — where a vert air hangs, out from the coping plane
 const VERT_LAUNCH_OUT = 0.35;  // m/s — minimum outward speed leaving the lip
 const PIVOT = 0.35;            // fraction of the steer rate available at a standstill (kick-turn)
+// pumping (owner, 2026-09-03): HOLDING the wind-up while riding a transition
+// pumps, up and down alike — the swing trick: the rider works against the
+// extra push of a concave curve. The gain follows the centripetal
+// acceleration (speed² × curvature): a flat, a straight bank face or the
+// convex coping give nothing, the kink at a bank's foot and a bowl do
+const PUMP_K = 0.12;           // fraction of the centripetal acceleration added along the travel
+const PUMP_MAX = 2.5;          // m/s² — cap on that
+const PUMP_AC_CAP = 25;        // m/s² — centripetal acceleration considered (tiny radii, mesh noise)
 // gap transfers (owner, 2026-09-03: quarter pipes side by side with gaps —
 // "gapping over, it shoots me out the back"): a vert air that would come down
 // beside its own ramp, near a NEIGHBOURING face to the left or right, is
@@ -125,6 +133,9 @@ export class SkatePhysics {
     this.braking = false;
     this.pushing = false;                    // set by anim ctrl during stroke window
     this.crouch = 0;                         // 0..1, driven by input hold
+    this.pump = false;                       // the wind-up is held: pump through concave curves
+    this.pumpA = 0;                          // m/s² — centripetal acceleration of the path right now (0 in the air / on a flat)
+    this._curv = 0;                          // smoothed concave curvature of the path (1/m)
     this.airTime = 0;
     this.airSpin = 0;                        // accumulated in-air yaw (180s/360s)
     this.events = [];                        // 'land' events for the anim ctrl
@@ -726,6 +737,15 @@ export class SkatePhysics {
         (this._prevN || (this._prevN = new THREE.Vector3())).copy(hit.normal);
         const step = Math.max(1e-4, vel.length() * dt);
         const convex = _dn.dot(vel) > 0;
+        // pumping: the concave curvature of the path (the normal turning
+        // against the travel), smoothed over the mesh facets
+        this._curv += ((convex ? 0 : _dn.length() / step) - this._curv) * Math.min(1, dt * 20);
+        this.pumpA = Math.min(PUMP_AC_CAP, vel.lengthSq() * this._curv);
+        if (this.pump) {
+          const v2 = vel.lengthSq();
+          const a = Math.min(PUMP_MAX, PUMP_K * this.pumpA);
+          if (a > 0 && v2 > 0.25 && v2 < VMAX * VMAX * 1.2) vel.addScaledVector(_d.copy(vel).multiplyScalar(1 / Math.sqrt(v2)), a * dt);
+        }
         // NET turn: concave turns pay back convex ones, so bumps cancel and
         // only a monotonic edge (coping, deck back) accumulates
         this._turn = Math.max(0, this._turn * Math.exp(-step / TURN_WINDOW - dt / TURN_TIME) + (convex ? _dn.length() : -_dn.length()));
@@ -737,7 +757,15 @@ export class SkatePhysics {
           this._leave();
           return;
         }
+        // snapping onto the surface lifts the contact point; that height is
+        // paid for in speed (energy), or a halfpipe pumps itself: +1 m/s a
+        // pass with nobody pumping
+        const lift = hit.point.y - this.pos.y;
         this.pos.copy(hit.point);
+        if (lift > 0) {
+          const v2 = vel.lengthSq(), v2n = v2 - 2 * G * lift;
+          if (v2 > 1e-6) vel.multiplyScalar(v2n > 0 ? Math.sqrt(v2n / v2) : 0);
+        }
         up.lerp(hit.normal, Math.min(1, dt * UP_SMOOTH)).normalize();
         this._keepForward();                   // carry the facing onto the new tilt
         vel.addScaledVector(up, -vel.dot(up));
@@ -771,6 +799,8 @@ export class SkatePhysics {
   _leave() {
     this.grounded = false;
     this.airTime = 0;
+    this.pumpA = 0;
+    this._curv = 0;
     this.airSpin = 0;
     this._prevN = null;
     this._turn = 0;

@@ -243,7 +243,8 @@ export class SkateAnim {
     const clip = this.clips.ollie;
     if (!clip || clip.tags.land == null) return;
     const landT = clip.tags.land;
-    this.holding = false;
+    // (the hold is NOT dropped here: a held wind-up rides through the air and
+    // re-engages on landing — one long hold pumps every transition)
     this.trick = {
       clip, mirror: clip.stance !== this.stance, name: 'air', vy: 0,
       t: Math.max(clip.tags.pop + 0.05, landT - 0.20),   // the catch: board under the feet
@@ -345,9 +346,17 @@ export class SkateAnim {
     // a held grab button engages as soon as the air allows it
     if (this.wantGrab && !(this.trick && this.trick.grab)) this._tryGrab();
 
-    // crouch envelope
+    // a held wind-up survives an air: back on the ground it re-engages by
+    // itself, so one long hold pumps every transition (owner, 2026-09-03:
+    // "just hold the click as long as I do, it is pumping automatically")
+    if (this.holding && phys.grounded && (this.state === 'ride' || this.state === 'landing' || this.state === 'push')) this.windupStart();
+    // crouch envelope. Pumping: the held wind-up stands up through a
+    // transition's curve (where the push is) and sinks again on the flat —
+    // the crouch follows the curve's centripetal acceleration
     if (this.state === 'windup' && this.holding) {
-      this.crouch = Math.min(1, this.crouch + dt / CROUCH_UP);
+      const target = 1 - 0.85 * Math.min(1, (phys.pumpA || 0) / 12);
+      if (this.crouch < target) this.crouch = Math.min(target, this.crouch + dt / CROUCH_UP);
+      else this.crouch = Math.max(target, this.crouch - dt / CROUCH_DOWN);
     } else if (this.state !== 'trick') {
       this.crouch = Math.max(0, this.crouch - dt / CROUCH_DOWN);
     }
