@@ -95,6 +95,24 @@ const EDGES = {
     [[0.33, 0.241, -0.278], [0.92, -0.059, -0.278], 'ledge', 'rim'],
   ],
 };
+// PROPS THAT COLLIDE AS SOLIDS (owner, 2026-09-03: "the other bench/table and
+// the rail also need proxy collision"): boxes in the model's local space, y
+// measured UP FROM THE MODEL'S FLOOR (the placement puts that floor on the
+// ground). Probed on the meshes at scale 1. The visual mesh stops colliding;
+// the grind edges are unchanged.
+const SOLIDS = {
+  picnic_table: [
+    { x: [-0.95, 0.95], y: [0, 0.63], z: [-0.32, 0.32] },      // the table top, solid to the ground (fills the slot in the top)
+    { x: [-0.95, 0.95], y: [0, 0.36], z: [0.38, 0.63] },       // the two bench seats
+    { x: [-0.95, 0.95], y: [0, 0.36], z: [-0.63, -0.38] },
+  ],
+  grind_rail: [
+    { x: [-0.95, 0.95], y: [0.24, 0.30], z: [-0.03, 0.03] },   // the bar (top = the edge height, 0.154 local + floor)
+    { x: [-0.95, 0.95], y: [0, 0.08], z: [-0.07, 0.07] },      // the base strip along its length (a curb)
+    { x: [-0.88, -0.82], y: [0, 0.24], z: [-0.03, 0.03] },     // the posts
+    { x: [0.82, 0.88], y: [0, 0.24], z: [-0.03, 0.03] },
+  ],
+};
 // the halfpipe is an open shell: seal boxes under its decks (local space)
 const SEALS = {
   ramp2: [{ x: [-0.5, -0.34], y: [-0.2, 0.18], z: [-0.39, 0.39] }, { x: [0.34, 0.5], y: [-0.2, 0.18], z: [-0.39, 0.39] }],
@@ -508,6 +526,17 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
       } else if (rec.model === 'curve_bridge') {
         p.traverse(o => { if (o.isMesh && o.userData.collider !== 'proxy') o.userData.noCollide = true; });
         p.add(benchProxy(baseMinY.curve_bridge));
+      }
+      if (SOLIDS[rec.model]) {
+        p.traverse(o => { if (o.isMesh && o.userData.collider !== 'proxy') o.userData.noCollide = true; });
+        const floor = baseMinY[rec.model] + 0.01;
+        for (const b of SOLIDS[rec.model]) {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(b.x[1] - b.x[0], b.y[1] - b.y[0], b.z[1] - b.z[0]), sealMat);
+          m.position.set((b.x[0] + b.x[1]) / 2, floor + (b.y[0] + b.y[1]) / 2, (b.z[0] + b.z[1]) / 2);
+          m.userData.collider = 'proxy';
+          m.name = rec.model + ' solid';
+          p.add(m);
+        }
       }
       for (const s of SEALS[rec.model] || []) {
         const b = new THREE.Mesh(new THREE.BoxGeometry(s.x[1] - s.x[0], s.y[1] - s.y[0], s.z[1] - s.z[0]), sealMat);
