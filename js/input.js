@@ -75,9 +75,11 @@ export class Input {
     }
     // mouse/pen: any click on the world = wind-up hold. touch: lower pad only.
     if (!isTouch || this._inPad(e.clientY)) {
-      // IN THE AIR the same press is a GRAB: hold to grab, lift to let go
-      // (owner: the ollie is done normally, the grab is a transition in the air)
-      if (this.cb.isAirborne?.() && !this._trickPtr) {
+      // TOUCH, in the air: the same press is a GRAB — hold to grab, lift to
+      // let go (owner: the ollie is done normally, the grab is a transition
+      // in the air). Desktop grabs with G only (owner, 2026-09-03); a mouse
+      // press in the air is just the hold, armed for the landing (pumping)
+      if (isTouch && this.cb.isAirborne?.() && !this._trickPtr) {
         if (this._grabPtr) return;
         this._grabPtr = { id: e.pointerId };
         this.cb.grabStart?.();

@@ -75,7 +75,9 @@ export class SkateAnim {
   // ── input events ──────────────────────────────────────────────────────────
 
   windupStart() {
-    if (!this.phys.grounded) return;
+    // pressed in the air: no wind-up, but the hold is armed — it engages by
+    // itself on landing (one long hold pumps every transition)
+    if (!this.phys.grounded) { this.holding = true; return; }
     if (this.state === 'ride' || this.state === 'push' || this.state === 'landing' || this.state === 'grind') {
       this._toState('windup');
       this.holding = true;
