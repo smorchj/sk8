@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { buildGrass } from './grass.js';
 import { CollisionWorld } from './collide.js';
 import { makeTerrain, makeStairs, heightAt, pavedMask, TILE } from './terrain.js';
+import { buildStairRails } from './rails.js';
 
 const T = 'assets/park/textures/';
 const M = 'assets/park/';
@@ -160,6 +161,8 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   stairMat.map.needsUpdate = stairMat.normalMap.needsUpdate = true;
   const stairs = makeStairs(stairMat);
   group.add(stairs);
+  const stairRails = buildStairRails();                     // handrails down the stairs (spline tubes, grindable)
+  group.add(stairRails.group);
   scene.add(group);
 
   // ── models (all loaded once; instances are clones) ────────────────────────
@@ -410,6 +413,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
     world.clear();
     world.add(terrain, 'terrain');
     world.add(stairs, 'stairs');
+    world.add(stairRails.group, 'stair_rail');
     for (const p of props) {
       // drop old proxies/seals
       for (const c of [...p.children]) if (c.userData.collider === 'proxy') p.remove(c);
@@ -493,6 +497,7 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
         }
       }
     }
+    edges.push(...stairRails.edges);                        // the handrails (already chained)
   }
 
   function setLayout(list) {
