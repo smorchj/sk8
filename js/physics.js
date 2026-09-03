@@ -82,7 +82,8 @@ const EDGE_SNAP = 0.35;        // m — an air that comes down a hair outside a 
                                // far onto the ramp and lands on its face (owner: "anything landing by
                                // the edge, I'm literally getting pushed away from the pipe")
 const POP_GRACE = 0.14;        // s after leaving a surface in which a pop still counts
-const GRIND_SNAP = 0.42;       // m — how close (horizontally) the board must come down to an edge
+const GRIND_SNAP = 0.47;       // m — the most the board's footprint can reach across an edge (a slide, deck end over the rail)
+const GRIND_MARGIN = 0.06;     // m — on top of the board's real footprint across the edge
                                // (generous, Skate-style: half a board; the wall probe keeps you
                                // WALL_REACH off a face, so the window to catch a ledge on a wall
                                // is the difference)
@@ -368,6 +369,7 @@ export class SkatePhysics {
 
   _findEdge() {
     let best = null, bestD = GRIND_SNAP;
+    const nose = this.noseDir(_n);
     for (const e of this.edges) {
       if (e === this._lastEdge && this.airTime < GRIND_RECATCH) continue;   // just left it
       _x.subVectors(this.pos, e.a);
@@ -383,7 +385,14 @@ export class SkatePhysics {
       // the middle of a bench or a table top rides it instead
       if (e.open && (this.pos.x - _o.x) * e.open.x + (this.pos.z - _o.z) * e.open.z < -GRIND_INSIDE) continue;
       const d = Math.hypot(this.pos.x - _o.x, this.pos.z - _o.z);
-      if (d < bestD) { bestD = d; best = { edge: e, t }; }
+      // the board must actually reach the edge: its footprint across the
+      // edge is the deck's half-length when the board lies across it (a
+      // slide) and the trucks' half-width when it lies along it (a 50-50),
+      // plus a small margin (owner: "it forces me into a grind just by
+      // jumping near a grindable object")
+      const c = nose.x * e.dir.x + nose.z * e.dir.z;
+      const reach = Math.sqrt(Math.max(0, 1 - c * c)) * BOARD.axleF + Math.abs(c) * BOARD.wheelX + GRIND_MARGIN;
+      if (d < reach && d < bestD) { bestD = d; best = { edge: e, t }; }
     }
     return best;
   }
