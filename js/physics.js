@@ -113,6 +113,8 @@ const TRANSITION = /^ramp2?$/;
 const isTransition = (tag) => TRANSITION.test(tag);
 // a prop: a bench, a ledge, a table, a rail, the hip — anything that is not
 // the terrain and not a transition
+// the solids a body can be trapped inside (the rail is a bar on posts — a rider under it is not inside it)
+const isSolidProp = (t) => isProp(t) && t !== 'grind_rail';
 const isProp = (tag) => !!tag && tag !== 'terrain' && tag !== 'stairs' && !TRANSITION.test(tag);
 const RIDE_MIN_Y = 0.8;        // on a prop the ground must be within ~37° of level: a chamfer, a
                                // rounded edge, a leg's foot is a WALL, never a surface to ride
@@ -862,6 +864,23 @@ export class SkatePhysics {
         this._turn = 0; this._prevN = null;
         return;
       }
+      // standing on the ground UNDER a prop's top — inside its solid (a landing
+      // pushed against its side, a thread through it): a top a hand above is
+      // a lip to step onto; otherwise creep out, away from the piece's centre,
+      // until its side lets the body through (owner: the rider stood inside
+      // the hip, the camera in its shell)
+      if (hit && !isProp(hit.object.userData.collider || '') && this.world.insideOf(_o.copy(this.pos).addScaledVector(up, 0.04), isSolidProp, 1.2, up)) {
+        const over = this.world.lastInside;
+        if (over.distance < 0.12 && over.normal.y < -0.5) {          // (a backface's normal is flipped toward us: a top reads as pointing down)
+          this.pos.addScaledVector(up, over.distance + 0.04 + 0.005);
+          this._prevN = null;
+        } else {
+          const bs = over.object.userData.bsphere;
+          _x.set(bs ? this.pos.x - bs.center.x : 1, 0, bs ? this.pos.z - bs.center.z : 0);
+          if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0);
+          this.pos.addScaledVector(_x.normalize(), 0.02);
+        }
+      }
       if (hit && PROBE_UP - hit.distance > STEP_UP && isProp(hit.object.userData.collider || '')) {
         // a prop's top more than a wheel's height ABOVE the wheels (a rail's
         // base, a bench foot, a plank): a curb. The board stops against it;
@@ -1050,7 +1069,7 @@ export class SkatePhysics {
       _o.copy(this.pos).addScaledVector(WORLD_UP, 0.06);
       _d.copy(vel).normalize();
       // (reach past the lift so a surface right under a slow fall is found)
-      const hit = this._sweepCast(_o, _d, step + 0.12);
+      let hit = this._sweepCast(_o, _d, step + 0.12);
       // a ramp's END PANEL hit from the air, just below the face's edge: the
       // rider is coming down a hair outside the ramp's width — put them onto
       // the face, never deflect them off the side (owner: "anything landing

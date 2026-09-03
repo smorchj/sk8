@@ -328,6 +328,14 @@ export class SkateAnim {
           // drift, not travel — folded in, ten airs walked a pumping rider
           // 2 m across the halfpipe and off its side
           tr.landFrame.x = 0;
+          // …and never INTO a wall: a rider who came down against the hip's
+          // side was folded 9 cm into it by the ollie clip's forward offset
+          // and stood inside the hip (owner's recording, 2026-09-03 50.6 s)
+          if (Math.abs(tr.landFrame.z) > 1e-3 && phys.world) {
+            _v.copy(phys.forward).multiplyScalar(Math.sign(tr.landFrame.z));
+            _va.copy(phys.pos).addScaledVector(phys.up, 0.1);
+            if (phys.world.cast(_va, _v, Math.abs(tr.landFrame.z) + 0.14)) tr.landFrame.z = 0;
+          }
           phys.pos.addScaledVector(phys.forward, tr.landFrame.z);
           // the heading fold only for a real trick: the ollie clip lands a
           // couple of degrees off, and folding that into the root on every

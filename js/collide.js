@@ -124,7 +124,9 @@ export class CollisionWorld {
   // and read as "inside", stopping every re-entry dead)
   insideOf(point, tagTest, up = 3, dir = UP) {
     const h = this.cast(point, dir, up);
-    return !!(h && h.backface && tagTest(h.object.userData.collider || ''));
+    const inside = !!(h && h.backface && tagTest(h.object.userData.collider || ''));
+    this.lastInside = inside ? h : null;          // (the face found, for whoever needs its piece)
+    return inside;
   }
 }
 
