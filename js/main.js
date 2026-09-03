@@ -359,19 +359,13 @@ function updateCamera(dt) {
     } else {
       physics.travelDir(_travel);
     }
-    // a grind that ran out of speed on a slope slides BACK down the rail: the
-    // rider does not turn, so neither does the camera (it would read as a
-    // turnaround) — the heading holds until the travel agrees with it again
-    const backSlide = physics.grind && (_travel.x * Math.sin(chaseYaw) + _travel.z * Math.cos(chaseYaw)) < 0;
-    if (!backSlide) {
-      let dy = Math.atan2(_travel.x, _travel.z) - chaseYaw;
-      while (dy > Math.PI) dy -= 2 * Math.PI;
-      while (dy < -Math.PI) dy += 2 * Math.PI;
-      chaseYaw += dy * (1 - Math.exp(-dt * 6));
-      // chest side relative to travel: regular nose-first = right; flips with
-      // stance and with fakie — and it's travel-based, so air spins don't swing it
-      chaseSide = (stance === 'regular' ? -1 : 1) * physics.rollSign;
-    }
+    let dy = Math.atan2(_travel.x, _travel.z) - chaseYaw;
+    while (dy > Math.PI) dy -= 2 * Math.PI;
+    while (dy < -Math.PI) dy += 2 * Math.PI;
+    chaseYaw += dy * (1 - Math.exp(-dt * 6));
+    // chest side relative to travel: regular nose-first = right; flips with
+    // stance and with fakie — and it's travel-based, so air spins don't swing it
+    chaseSide = (stance === 'regular' ? -1 : 1) * physics.rollSign;
   }
   // free-look relaxes back to the chase view — but NEVER while winding up:
   // the camera must hold still from click to release (owner's spec)
@@ -397,13 +391,17 @@ function updateCamera(dt) {
     .addScaledVector(_lookDir, 1.2)                       // lead the motion
     .addScaledVector(_sideDir, sideSign * 0.12)
     .add(new THREE.Vector3(0, 0.85, 0));
-  // the camera never sits inside the park (owner: the halfpipe kept blocking
-  // it): a spring arm from the rider to the wanted spot — a badly buried arm
-  // first lifts the camera to look down over the wall, then whatever is
-  // still in the way pulls it in front. Applied to the wanted spot and to
-  // the lagging position, so neither ever ends up inside a wall.
-  camPos.lerp(want, 1 - Math.exp(-dt * 3.3));            // lazier, springier
-  unblockCamera(lookTarget, camPos, dt);
+  // lazy sideways, TIGHT in height: a rider dropping 9 m back into a ramp
+  // at 10 m/s left the lagging camera 4 m above them, looking down
+  const kH = 1 - Math.exp(-dt * 3.3), kV = 1 - Math.exp(-dt * 14);
+  camPos.x += (want.x - camPos.x) * kH;
+  camPos.z += (want.z - camPos.z) * kH;
+  camPos.y += (want.y - camPos.y) * kV;
+  // the spring arm, the way every game does it: if the park is between the
+  // rider and the camera, the camera comes in along its own arm to just in
+  // front of what blocks it, and looks up at the rider from there. Nothing
+  // else — no lifting, no top-down (owner, 2026-09-03)
+  springArm(lookTarget, camPos);
   camera.position.copy(camPos);
   camLook.lerp(lookTarget, 1 - Math.exp(-dt * 5.5));
   camera.lookAt(camLook);
@@ -418,32 +416,16 @@ function updateCamera(dt) {
 }
 const _lookDir = new THREE.Vector3();
 let chaseYaw = 0, chaseSide = 1;          // the chase heading / chest side, frozen in the air
-const _camDir = new THREE.Vector3(), _camLift = new THREE.Vector3(), _camEye = new THREE.Vector3();
-const CAM_MARGIN = 0.35, CAM_MIN = 1.6, CAM_LIFT = 1.0;
-let camArm = 1;                            // the fraction of the arm the camera may use (smoothed)
-function unblockCamera(target, pos, dt) {
-  _camEye.copy(physics.pos).y += 0.9;                     // the arm protects the view of the RIDER
+const _camDir = new THREE.Vector3(), _camEye = new THREE.Vector3();
+const CAM_MARGIN = 0.3, CAM_MIN = 0.5;
+function springArm(target, pos) {
+  _camEye.copy(physics.pos).y += 0.9;                     // the rider's chest
   _camDir.subVectors(pos, _camEye);
-  let d = _camDir.length();
-  if (d < 1e-3) return pos;
+  const d = _camDir.length();
+  if (d < 1e-3) return;
   _camDir.multiplyScalar(1 / d);
-  let hit = park.world.cast(_camEye, _camDir, d);
-  let hitD = hit ? hit.distance : Infinity;
-  if (hit && hitD < d * 0.6) {                            // most of the arm is in a wall: try a little higher
-    _camLift.copy(pos).y += CAM_LIFT;
-    _camDir.subVectors(_camLift, _camEye);
-    const d2 = _camDir.length();
-    _camDir.multiplyScalar(1 / d2);
-    const hit2 = park.world.cast(_camEye, _camDir, d2);
-    const hitD2 = hit2 ? hit2.distance : Infinity;
-    if (hitD2 > hitD * 1.5) { pos.copy(_camLift); d = d2; hitD = hitD2; }
-    else _camDir.subVectors(pos, _camEye).multiplyScalar(1 / d);
-  }
-  // pull in at once, let out slowly (no popping in and out at every facet)
-  const allowed = Math.min(1, Math.max(CAM_MIN, hitD - CAM_MARGIN) / d);
-  camArm = allowed < camArm ? allowed : camArm + (allowed - camArm) * (1 - Math.exp(-dt * 2.5));
-  if (camArm < 1) pos.copy(_camEye).addScaledVector(_camDir, d * camArm);
-  return pos;
+  const hit = park.world.cast(_camEye, _camDir, d);
+  if (hit) pos.copy(_camEye).addScaledVector(_camDir, Math.max(CAM_MIN, hit.distance - CAM_MARGIN));
 }
 const _sideDir = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);

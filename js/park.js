@@ -343,13 +343,35 @@ export async function buildPark({ scene, loader, renderer, onProgress }) {
   function rampProxy(obj) {
     const spec = MODELS.ramp;
     const s = obj.scale.x;
+    // a side is "covered" when another quarter pipe's body stands just
+    // outside it — at ANY angle (owner's rows fan out 30° between ramps;
+    // the old rule wanted the same heading within 5° and a flush fit, so an
+    // end panel stood between two faces as an invisible wall). Sample points
+    // a hand outside the panel along the profile; if most of them lie inside
+    // a neighbour's volume, the neighbour's face continues ours: no panel.
     const nb = { L: false, R: false };
-    for (const o of props) {
-      if (o === obj || o.userData.park.model !== 'ramp') continue;
-      const dRot = Math.abs(((o.rotation.y - obj.rotation.y + Math.PI) % (2 * Math.PI)) - Math.PI);
-      if (dRot > 0.09) continue;
-      const l = obj.worldToLocal(o.position.clone());         // in units of this ramp
-      if (Math.abs(l.x) < 0.15 && Math.abs(Math.abs(l.z) - 1) < 0.12) nb[l.z > 0 ? 'R' : 'L'] = true;
+    const others = props.filter(o => o !== obj && o.userData.park.model === 'ramp');
+    const footX = rampProfile[0].x, backX = rampProfile[rampProfile.length - 1].x;
+    const yAt = (x) => {                                       // profile height at a local x
+      let best = rampProfile[0];
+      for (const q of rampProfile) if (Math.abs(q.x - x) < Math.abs(best.x - x)) best = q;
+      return best.y;
+    };
+    const _w = new THREE.Vector3();
+    for (const [side, zs] of [['L', -0.5], ['R', 0.5]]) {
+      let inside = 0, n = 0;
+      for (let k = 0; k < 6; k++) {
+        const t = k / 5, x = footX + (backX - footX) * t;
+        _w.set(x, Math.min(yAt(x), 0.3) - 0.05, zs + Math.sign(zs) * 0.12);  // just outside, just under the lip
+        obj.localToWorld(_w);
+        n++;
+        for (const o of others) {
+          const l = o.worldToLocal(_w.clone());
+          const lo = Math.min(footX, backX), hi = Math.max(footX, backX);
+          if (Math.abs(l.z) <= 0.55 && l.x >= lo - 0.05 && l.x <= hi + 0.05 && l.y <= yAt(l.x) + 0.1 && l.y >= -0.4) { inside++; break; }
+        }
+      }
+      if (inside >= 4) nb[side] = true;
     }
     const pos = [], idx = [];
     const V = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };

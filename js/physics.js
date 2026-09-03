@@ -702,12 +702,13 @@ export class SkatePhysics {
         const wall = k <= 1 ? hit.normal.dot(up) < (prop ? RIDE_MIN_Y : WALL_DOT)
                             : (prop || hit.normal.dot(up) < 0.15);
         if (wall) {
+          // the motion INTO the face goes; the rest slides along it. (It used
+          // to also scale the whole velocity by the room left before the face,
+          // so a face within 14 cm — the rail bar over a rider who had slid
+          // under it, a side panel — zeroed everything, every frame: the
+          // owner's "stuck in the flat rail" and the dead stop at a ramp foot.)
           const into = vel.dot(hit.normal);
           if (into < 0) vel.addScaledVector(hit.normal, -into * 1.02);
-          // don't let this step carry us into the face
-          const room = Math.max(0, hit.distance - WALL_REACH);
-          spd = vel.length();
-          if (spd * dt > room) vel.multiplyScalar(spd > 1e-6 ? room / (spd * dt) : 0);
           break;
         }
       }
@@ -742,6 +743,21 @@ export class SkatePhysics {
         // back in
         const top = this.world.cast(_o.copy(this.pos).addScaledVector(WORLD_UP, 6), DOWN, 12);
         if (top && !top.backface) {
+          // a face only a few centimetres overhead is a LIP, not an inside:
+          // a quarter pipe's foot floats 4 cm above the terrain, and riding
+          // onto it read as "inside", stopping the board dead at the foot
+          // (owner: "it stops on the ground-to-ramp transition too easily").
+          // Step up onto it and keep rolling
+          if (top.point.y - this.pos.y < 0.12 && top.normal.y >= 0.5) {
+            this.pos.copy(top.point);
+            up.copy(top.normal);
+            vel.addScaledVector(up, -vel.dot(up));
+            this.groundY = this.pos.y;
+            this.surface = top.object.userData.collider || null;
+            this._keepForward();
+            this._prevN = null;
+            return;
+          }
           this.pos.copy(top.point);
           up.copy(top.normal.y >= 0.5 ? top.normal : WORLD_UP);
           this.groundY = this.pos.y;
@@ -754,9 +770,20 @@ export class SkatePhysics {
       if (hit && PROBE_UP - hit.distance > STEP_UP && isProp(hit.object.userData.collider || '')) {
         // a prop's top more than a wheel's height ABOVE the wheels (a rail's
         // base, a bench foot, a plank): a curb. The board stops against it;
-        // it never rolls up onto it — that takes an ollie
+        // it never rolls up onto it — that takes an ollie. It is NOT frozen:
+        // zeroing the velocity every frame left a rider who landed inside a
+        // rail base's footprint stuck for good (owner: "I get stuck in the
+        // flat rail"). Only the motion toward the piece is dropped, the rest
+        // rolls on, and the board creeps back out of the footprint
         this.pos.addScaledVector(vel, -dt);
-        vel.set(0, 0, 0);
+        const bs = hit.object.userData.bsphere;
+        _x.set(bs ? this.pos.x - bs.center.x : 0, 0, bs ? this.pos.z - bs.center.z : 0);
+        if (_x.lengthSq() > 1e-6) {
+          _x.normalize();
+          const into = -vel.dot(_x);
+          if (into > 0) vel.addScaledVector(_x, into);
+          this.pos.addScaledVector(_x, 0.02);
+        } else vel.set(0, 0, 0);
         this._turn = 0; this._prevN = null;
         return;
       }
