@@ -108,7 +108,7 @@ export class Input {
 
   _down(e) {
     if (this.disabled) return;                  // the map editor owns the mouse
-    if (e.target.closest && e.target.closest('#creatorbar, #creatorPanel, #mapEditor, #recPanel')) return;
+    if (e.target.closest && e.target.closest('#creatorbar, #creator, #mapEditor, #recPanel')) return;
     const isTouch = e.pointerType === 'touch';
     // touch: hold a screen EDGE to spin in the air (owner: no way to 180 on
     // phone otherwise). Also armable DURING wind-up so the rotation starts the

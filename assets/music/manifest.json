@@ -1,0 +1,36 @@
+{
+  "lufs": -16,
+  "truePeak": -1.5,
+  "tracks": [
+    {
+      "name": "oldschool",
+      "file": "oldschool.m4a",
+      "seconds": 248.09,
+      "kb": 4019
+    },
+    {
+      "name": "nybeat",
+      "file": "nybeat.m4a",
+      "seconds": 118.7,
+      "kb": 1926
+    },
+    {
+      "name": "xtrack",
+      "file": "xtrack.m4a",
+      "seconds": 120.04,
+      "kb": 1909
+    },
+    {
+      "name": "sbeat",
+      "file": "sbeat.m4a",
+      "seconds": 110.4,
+      "kb": 1787
+    },
+    {
+      "name": "four",
+      "file": "four.m4a",
+      "seconds": 50.53,
+      "kb": 800
+    }
+  ]
+}

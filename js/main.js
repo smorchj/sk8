@@ -23,8 +23,11 @@ import { SkatePhysics } from './physics.js';
 import { Input } from './input.js';
 import { Recorder } from './recorder.js';
 import { SkateAnim } from './anim.js';
-import { RiderCreator } from './creator.js';
+import { RiderCreator, faceOf } from './creator.js';
+import { idle } from './idle.js';
+import { makeBuffer } from './rig.js';
 import { buildSoleData } from './sole.js';
+import { Boombox } from './boombox.js';
 
 const BOARD_GLB = 'assets/skateboard.glb';
 const NOSE_FLIP = true;   // skateboard.glb visual nose is on -Z; game nose = +Z
@@ -207,8 +210,12 @@ const setSkill = (n, l) => {
 };
 
 const creator = new RiderCreator({
-  THREE, GLTFLoader, renderer,
+  THREE, GLTFLoader, renderer, scene,
   ktx2Loader: ktx2, meshoptDecoder: MeshoptDecoder,
+  onOpen: (front) => creatorMode(true, front),
+  onClose: () => creatorMode(false),
+  frame: (kind) => creatorFrame(kind),
+  music: () => boombox,
   getStance: () => stance,
   getSkills: () => ({ ...skills }),
   setSkill,
@@ -245,6 +252,9 @@ try {
 
 // the rider starts on the street slab, rolling toward the stairs and the pad
 const START = { x: 0, z: -16, yaw: 0 };
+// the boombox easter egg: gap over it and the park's music comes on
+const boombox = new Boombox({ camera, park });
+
 const physics = new SkatePhysics(park.world);
 physics.setEdges(park.edges);
 physics.setTransitions(park.transitions);   // coping lines: gap transfers between neighbouring faces
@@ -328,8 +338,12 @@ function setStance(s) {
 bReg.addEventListener('click', () => setStance('regular'));
 bGoof.addEventListener('click', () => setStance('goofy'));
 setStance(stance);
+updateRiderTag();
 
 document.getElementById('openCreator').addEventListener('click', () => { input.unlock(); creator.open(); });
+addEventListener('keydown', (e) => {                 // Esc from the game opens the menu too
+  if (e.key === 'Escape' && !creator.open_ && !editor?.on && !recorder.replaying) { input.unlock(); creator.open(); }
+});
 
 // ── camera ──────────────────────────────────────────────────────────────────
 
@@ -340,9 +354,114 @@ controls.target.set(0, 1, 0);
 
 const camPos = new THREE.Vector3(0, 1.8, -4);
 const camLook = new THREE.Vector3();
+
+// ── the creator's camera: yours to spin and zoom, closing in on the face ──
+// While the creator is open the rider stands still at the spot, input is off
+// the board, and OrbitControls has the camera with limits that keep it out
+// of the ground and off the rider's nose. Tabs ask for 'body' or 'face' and
+// the orbit target and distance ease over.
+let inCreator = false;
+let charYaw0 = 0;                  // the rider's own yaw, restored when the creator closes
+const idleBuf = makeBuffer();      // the creator's rider stands (animation.md idle)
+let idleT = 0;
+const crFrame = { target: new THREE.Vector3(), dist: 3.0, t: 1, pos: null, kind: 'body',   // pos: a place to swing to (the front of the face)
+  from: new THREE.Vector3(), fromTarget: new THREE.Vector3() };                        // where the swing started (an exact tween, whatever the frame rate)
+const _crTo = new THREE.Vector3(), _crDir = new THREE.Vector3();
+function creatorMode(on, front = false) {
+  inCreator = on;
+  input.disabled = on;
+  document.body.classList.toggle('creator', on);
+  if (on) {
+    physics.vel.set(0, 0, 0);
+    controls.enabled = true;
+    controls.enablePan = false;
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.minDistance = 0.45; controls.maxDistance = 6;
+    controls.minPolarAngle = 0.35; controls.maxPolarAngle = 1.62;
+    controls.autoRotate = true; controls.autoRotateSpeed = -0.6;
+    controls.addEventListener('start', stopSpin);
+    // start behind-left of the rider, looking at the chest, then ease to the body frame
+    charYaw0 = charScene.rotation.y;
+    faceFront();                                 // square to the camera before the first frame
+    const { forward } = faceOf(charScene, THREE);
+    const side = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+    camera.position.copy(physics.pos).addScaledVector(forward, 3.0).addScaledVector(side, 1.1).add(new THREE.Vector3(0, 1.5, 0));
+    controls.target.copy(physics.pos).add(new THREE.Vector3(0, 1.0, 0));
+    creatorFrame('body', true);
+  } else {
+    if (charScene) { charScene.rotation.y = charYaw0; charScene.updateWorldMatrix(true, true); }
+    controls.removeEventListener('start', stopSpin);
+    controls.autoRotate = false;
+    controls.enabled = freecam;
+    controls.minDistance = 0; controls.maxDistance = Infinity;
+    controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI;
+    if (!front) physics.vel.set(0, 0, 2.0);
+    updateRiderTag();
+  }
+}
+function stopSpin() { controls.autoRotate = false; }
+// A skater stands SIDEWAYS on the board, so the mesh's face looks ~107 deg off
+// the root's forward. In the creator the rider stands square to the camera
+// instead. Re-applied every frame because picking a rider or an outfit respawns
+// the character, which would put the stance back.
+function faceFront() {
+  if (!charScene) return;
+  const face = faceOf(charScene, THREE, 'Hips').forward;   // the BODY squares up, not the head
+  const rootFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(playerRoot.quaternion);
+  const d = Math.atan2(face.x, face.z) - Math.atan2(rootFwd.x, rootFwd.z);
+  if (Math.abs(d) < 1e-4) return;
+  charScene.rotation.y -= d;
+  charScene.updateWorldMatrix(true, true);
+}
+function creatorFrame(kind, snap = false) {
+  if (!charScene) return;
+  crFrame.kind = kind;
+  if (kind === 'face') {
+    // the eyes say where the face is and which way it looks (a skater stands
+    // sideways on the board); the camera swings round to meet it
+    const { target, forward } = faceOf(charScene, THREE);
+    crFrame.target.copy(target);
+    crFrame.dist = 0.75;
+    crFrame.pos = target.clone().addScaledVector(forward, 0.75); crFrame.pos.y += 0.06;
+  } else {
+    crFrame.target.copy(physics.pos).y += 0.95;
+    crFrame.dist = 3.0;
+    crFrame.pos = null;                                  // keep whatever angle the player had
+  }
+  crFrame.t = snap ? 1 : 0;
+  crFrame.from.copy(camera.position); crFrame.fromTarget.copy(controls.target);
+}
+function updateCreatorCamera(dt) {
+  if (crFrame.t < 1) {
+    crFrame.t = Math.min(1, crFrame.t + dt / 0.6);
+    const k = 1 - Math.pow(1 - crFrame.t, 3);          // ease out
+    // OrbitControls rebuilds the camera from its own damping and auto-rotate
+    // every frame and would undo a swing, so both are off while it runs; the
+    // face is re-read each frame in case the pose is still settling
+    controls.autoRotate = false; controls.enableDamping = false;
+    if (crFrame.kind === 'face') {
+      const { target, forward } = faceOf(charScene, THREE);
+      crFrame.target.copy(target);
+      crFrame.pos = target.clone().addScaledVector(forward, crFrame.dist); crFrame.pos.y += 0.06;
+    }
+    if (crFrame.t >= 1) controls.enableDamping = true;
+    _crDir.subVectors(camera.position, controls.target);
+    const d = _crDir.length(); _crDir.divideScalar(d || 1);
+    controls.target.lerpVectors(crFrame.fromTarget, crFrame.target, k);
+    if (crFrame.pos) _crTo.copy(crFrame.pos);
+    else { _crDir.subVectors(crFrame.from, crFrame.fromTarget).normalize(); _crTo.copy(crFrame.target).addScaledVector(_crDir, crFrame.dist); }
+    camera.position.lerpVectors(crFrame.from, _crTo, k);
+  }
+  controls.update();
+}
+function updateRiderTag() {
+  const el = document.getElementById('riderTag');
+  if (el) el.textContent = creator.state.name || '';
+}
 const _travel = new THREE.Vector3();
 
 function updateCamera(dt) {
+  if (inCreator) { updateCreatorCamera(dt); return; }
   if (freecam) { controls.update(); return; }
   // chase the VELOCITY direction, not the board yaw — during air spins (and
   // revert skids) the board whirls while momentum doesn't, and the camera
@@ -483,12 +602,16 @@ function updateHUD() {
 
 document.getElementById('loading').remove();
 const clock = new THREE.Clock();
+// the front door: you build your skater first (owner, 2026-09-04). The loop
+// runs under it so the rider stands there breathing while you work.
+queueMicrotask(() => creator.open({ front: true }));
 
 // headless = a review seek: physics + the anim state machine only, no rig,
 // IK, camera or grass work (the visuals cannot feed back into the physics)
 function tick(dt, headless = false) {
   if (!recorder.replaying) input.update(dt);      // (a replay sets the channels itself)
   recorder.frame(dt);
+  if (inCreator) { physics.vel.set(0, 0, 0); input.steer = 0; }
   physics.steer = input.steer;
   physics.spin = input.spin || 0;
   physics.pump = anim.holding && anim.state === 'windup';   // the held wind-up pumps a transition (anim state: replays match)
@@ -503,14 +626,24 @@ function tick(dt, headless = false) {
   sun.target.position.set(physics.pos.x, 0, physics.pos.z);
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
   park.update(dt);                                  // grass wind
-  if (buf.board) {
-    boardNode.position.fromArray(buf.board.pos);
-    boardNode.quaternion.fromArray(buf.board.quat);
+  boombox.update(dt, physics);                      // gapped the boombox? switch the music on
+  if (inCreator) {
+    // the creator's rider stands rather than crouching on the board: the idle
+    // from creategamecharacters.ai's animation.md. No sole/plant passes — those
+    // exist to hold the feet on the deck.
+    idleT += dt;
+    rig.apply(idle(idleBuf, idleT));
+    faceFront();
+  } else {
+    if (buf.board) {
+      boardNode.position.fromArray(buf.board.pos);
+      boardNode.quaternion.fromArray(buf.board.quat);
+    }
+    rig.apply(buf);
+    anim.soleAttach(rig, boardNode, soleData, playerRoot);   // mesh-level sole-to-deck contact
+    anim.groundFeetIK(rig, boardNode, soleData);     // per-foot residual planting
+    anim.plantPostRig(rig, boardNode, playerRoot);   // landing feet-on-board invariant
   }
-  rig.apply(buf);
-  anim.soleAttach(rig, boardNode, soleData, playerRoot);   // mesh-level sole-to-deck contact
-  anim.groundFeetIK(rig, boardNode, soleData);     // per-foot residual planting
-  anim.plantPostRig(rig, boardNode, playerRoot);   // landing feet-on-board invariant
 
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
   sun.target.position.copy(physics.pos);
@@ -567,7 +700,8 @@ const editor = new MapEditor({
 
 let inspect = false;
 window.SK8 = {
-  physics, camera, controls, setStance, creator, boardNode, playerRoot, skills, setSkill, park, editor,
+  physics, camera, controls, setStance, creator, get charScene() { return charScene; }, boardNode, playerRoot, skills, setSkill, park, editor,
+  boombox,                                          // SK8.boombox.gapped() / .off() / .setVolume(0.5)
   pause(on = true) { paused = on; },
   hud(on = true) { showHUD(on); },
   // bug recordings: SK8.replay('/_scratch/rec-….json') opens it in the review

@@ -32,12 +32,16 @@ export const MODELS = {
   grind_rail: { label: 'rail', scale: 1.4 },
   curve_bridge: { label: 'curve bridge', scale: 3.0 },
   picnic_table: { label: 'picnic table', scale: 1.0 },
-  // owner's 2026-09-03 Meshy ledge: a concrete block on a slab, scale 4 puts
-  // its top 0.36 m over the slab and the sink buries the slab so only the block
-  // stands proud. SINK IS WORLD METRES and the editor does not rescale it, so
+  // owner's 2026-09-03 Meshy DIY spot: three grind tiers on a slab. It collides
+  // as its OWN MESH — no box proxies, they never fit this shape and left the
+  // board floating. SINK IS WORLD METRES and the editor does not rescale it, so
   // after resizing set sink = 0.072 * scale by hand (scale 4 -> 0.29,
-  // scale 7 -> 0.50) or the slab stands proud again.
+  // scale 7 -> 0.50) or the slab stands proud.
   skate_ledge: { label: 'DIY ledge', scale: 4.0, sink: 0.28 },
+  // the easter egg: gap over it between two quarter pipes and the music comes
+  // on (js/boombox.js). Collides as its own mesh — you can clip it and it will
+  // stop you, which is half the fun of aiming for it.
+  boombox: { label: 'boombox', scale: 0.4 },
 };
 
 // the quarter-pipe model's transition faces its local +X (height-probed);
@@ -54,6 +58,7 @@ export const DEFAULT_LAYOUT = [
   { model: 'curve_bridge', x: -9, z: -21, rot: 0, scale: 3.0 },
   { model: 'picnic_table', x: -27, z: 10, rot: 30, scale: 1.0 },
   { model: 'skate_ledge', x: -5, z: -14, rot: 0, scale: 4.0, sink: 0.28 },
+  { model: 'boombox', x: 0, z: 17.5, rot: -90, scale: 0.4 },   // the gap between the two rows of quarter pipes
 ];
 
 // grindable edges per model, in the model's local space (probed on the
@@ -92,11 +97,19 @@ const EDGES = {
   // collision mesh 2026-09-03 (cross-scans at ten stations; the top is
   // ~0.9 m wide and the old centreline sat up to 0.12 m off it).
   curve_bridge: [...poly(BENCH_INNER), ...poly(BENCH_OUTER)],
-  // the DIY ledge's block: both long top edges (local y 0.0805, probed
-  // 2026-09-03). The block runs along z over part of its slab only.
+  // the DIY spot is three tiers, each with a rusty grind strip along the edge
+  // that faces the rider: the high concrete ledge, the low one, and the steel
+  // bar on posts out front. Cross-sectioned on the mesh 2026-09-03 — the drops
+  // sit at x -0.105, -0.019 and the bar's top runs x 0.153..0.173. All three
+  // span z -0.43..0.18.
+  // All three are 'ledge', including the bar: 'rail' makes the physics ignore
+  // the WHOLE prop for a moment on dismount (physics.js, so you cannot land
+  // inside a bar), which here would drop the rider through the concrete they
+  // are standing on.
   skate_ledge: [
-    [[-0.192, 0.0805, -0.434], [-0.192, 0.0805, 0.182], 'ledge'],
-    [[-0.106, 0.0805, -0.434], [-0.106, 0.0805, 0.182], 'ledge'],
+    [[-0.105, 0.0806, -0.43], [-0.105, 0.0806, 0.18], 'ledge'],   // high ledge
+    [[-0.019, 0.0324, -0.43], [-0.019, 0.0324, 0.18], 'ledge'],   // low ledge
+    [[0.163, 0.0514, -0.425], [0.163, 0.0514, 0.20], 'ledge'],    // the steel bar
   ],
   // (corners re-probed 2026-09-03 with the board's real contact geometry: the
   // rim's corner is at local z −0.278 and its bank crest is a straight line
@@ -125,13 +138,6 @@ const SOLIDS = {
     { x: [-0.95, 0.95], y: [0, 0.08], z: [-0.07, 0.07] },      // the base strip along its length (a curb)
     { x: [-0.88, -0.82], y: [0, 0.24], z: [-0.03, 0.03] },     // the posts
     { x: [0.82, 0.88], y: [0, 0.24], z: [-0.03, 0.03] },
-  ],
-  // the DIY ledge (floor = local y -0.082): the slab, the concrete block and
-  // the wooden frame that runs along the slab's other side
-  skate_ledge: [
-    { x: [-0.195, 0.197], y: [0, 0.072], z: [-0.5, 0.5] },      // the slab (sunk flush with the ground)
-    { x: [-0.195, -0.103], y: [0, 0.1625], z: [-0.434, 0.182] }, // the block, solid to the ground
-    { x: [0.146, 0.178], y: [0, 0.1335], z: [-0.40, 0.19] },     // the wooden side frame
   ],
 };
 // the halfpipe is an open shell: seal boxes under its decks (local space)
