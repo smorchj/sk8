@@ -28,6 +28,7 @@ import { idle } from './idle.js';
 import { makeBuffer } from './rig.js';
 import { buildSoleData } from './sole.js';
 import { Boombox } from './boombox.js';
+import { SkateSfx } from './sfx.js';
 
 const BOARD_GLB = 'assets/skateboard.glb';
 const NOSE_FLIP = true;   // skateboard.glb visual nose is on -Z; game nose = +Z
@@ -256,6 +257,8 @@ const START = { x: 0, z: -16, yaw: 0 };
 const boombox = new Boombox({ camera, park });
 
 const physics = new SkatePhysics(park.world);
+// the board's voice — synthesised, driven off the physics from outside
+const sfx = new SkateSfx({ listener: boombox.listener, physics, anim: null });
 physics.setEdges(park.edges);
 physics.setTransitions(park.transitions);   // coping lines: gap transfers between neighbouring faces
 physics.pos.set(START.x, 0, START.z);
@@ -263,6 +266,7 @@ physics.vel.set(0, 0, 2.0);
 const _rootQ = new THREE.Quaternion();
 
 anim = new SkateAnim({ rig, clips, physics, stance, skel, getSkill, grabs });
+sfx.anim = anim;
 
 const trickEl = document.getElementById('trickname');
 let trickFlashT = 0;
@@ -627,6 +631,7 @@ function tick(dt, headless = false) {
   sun.position.set(physics.pos.x + 18, 26, physics.pos.z + 10);
   park.update(dt);                                  // grass wind
   boombox.update(dt, physics);                      // gapped the boombox? switch the music on
+  sfx.update(dt);                                   // roll, grind, pop, land
   if (inCreator) {
     // the creator's rider stands rather than crouching on the board: the idle
     // from creategamecharacters.ai's animation.md. No sole/plant passes — those
@@ -702,6 +707,7 @@ let inspect = false;
 window.SK8 = {
   physics, camera, controls, setStance, creator, get charScene() { return charScene; }, boardNode, playerRoot, skills, setSkill, park, editor,
   boombox,                                          // SK8.boombox.gapped() / .off() / .setVolume(0.5)
+  sfx,                                              // SK8.sfx.pop() / .land() / .setVolume(0.6)
   pause(on = true) { paused = on; },
   hud(on = true) { showHUD(on); },
   // bug recordings: SK8.replay('/_scratch/rec-….json') opens it in the review

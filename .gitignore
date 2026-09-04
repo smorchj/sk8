@@ -9,3 +9,8 @@ node_modules/
 
 _scratch/
 .playwright-mcp/
+
+# the cut SFX one-shots: source takes are YouTube rips with no redistribution
+# grant, and the game synthesises everything (js/sfx.js), so they never ship.
+# tools/sfx-cut.mjs rebuilds them locally from the owner's folder.
+assets/sfx/

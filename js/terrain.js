@@ -51,6 +51,22 @@ export function pavedMask(x, z) {
   return 1 - smooth(-0.9, 0.9, sd + n);
 }
 
+// Which ground you are standing on, by the SAME rects and noise the shader
+// blends with — the whole park floor is one mesh under one collider tag, so a
+// collision tag cannot tell grass from concrete from asphalt. The audio asks
+// this so each surface can sound like itself.
+export function groundKind(x, z) {
+  let sdC = 1e9, sdA = 1e9;
+  for (const r of RECTS.concrete) sdC = Math.min(sdC, rectSdf(r, x, z));
+  for (const r of RECTS.asphalt) sdA = Math.min(sdA, rectSdf(r, x, z));
+  const n = (fbm(x * 0.35, z * 0.35) - 0.5) * 2.2;
+  const mC = 1 - smooth(-0.9, 0.9, sdC + n);
+  if (mC > 0.5) return 'concrete';
+  const mA = (1 - smooth(-0.9, 0.9, sdA + n)) * (1 - mC);
+  if (mA > 0.5) return 'asphalt';
+  return 'grass';
+}
+
 // analytic ground height (the mesh samples this)
 export function heightAt(x, z) {
   // the corridor cut stays strictly under the stair boxes (mesh vertices sit

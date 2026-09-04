@@ -1,0 +1,30 @@
+{
+  "note": "joint lines read off the concrete height map by tools/tile-seams.mjs; positions are normalised texture coords",
+  "source": "assets/park/textures/concrete_h.jpg",
+  "tile": [
+    5,
+    2.73
+  ],
+  "across": [
+    0.01819,
+    0.14539,
+    0.2504,
+    0.5015,
+    0.74973
+  ],
+  "acrossDepth": [
+    0.768,
+    0.637,
+    1.071,
+    1.098,
+    1.395
+  ],
+  "along": [
+    0.49947,
+    0.99726
+  ],
+  "alongDepth": [
+    1.065,
+    1.134
+  ]
+}
