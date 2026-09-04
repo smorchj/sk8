@@ -22,6 +22,7 @@ const PREPOP = 0.10;         // start trick clips this long before their pop tag
 const CROUCH_UP = 0.55;      // s to full wind-up
 const CROUCH_DOWN = 0.30;    // s to stand back up
 const FADE = 0.12;           // s default crossfade on state changes
+const LEAN_TAU = 0.20;         // s — how fast the body's lean chases the steer input
 const GRAB_IN = 0.16;        // s to reach the grab pose after the input
 const GRAB_OUT = 0.14;       // s to let go after release
 const GRAB_LAND = 0.22;      // let go this long before touchdown, no matter what
@@ -49,6 +50,7 @@ export class SkateAnim {
     this.lastTrick = '—';
     this.onTrick = null;                  // callback(label)
 
+    this.lean = 0;                        // eased steer, for the LEAN only (see update)
     this.out = makeBuffer();              // what the rig gets
     this._pose = makeBuffer();            // working buffer
     this._tmp = makeBuffer();             // scratch (landing measurements)
@@ -100,7 +102,7 @@ export class SkateAnim {
   pushStart() {
     if (!this.phys.grounded) return;
     this.pushHeld = true;
-    if (this.state === 'ride' && Math.abs(this._alongNose()) < 6.5) {
+    if (this.state === 'ride') {
       this._toState('push');
       this.time = this.clips.push.pushInfo?.loopA ?? 0.2;
     }
@@ -113,7 +115,7 @@ export class SkateAnim {
   pushStroke() {
     if (!this.phys.grounded) return;
     this._swipeHold = 0.75;
-    if (this.state === 'ride' && Math.abs(this._alongNose()) < 6.5) {
+    if (this.state === 'ride') {
       this._toState('push');
       this.time = this.clips.push.pushInfo?.loopA ?? 0.2;
     }
@@ -282,6 +284,12 @@ export class SkateAnim {
     this._t += dt;
     this._dt = dt;
     const phys = this.phys;
+    // The steer input snaps to full deflection on the frame the key goes down,
+    // and leaning straight off it banked the rider in ONE frame (owner,
+    // 2026-09-04: "it snaps to the lean instead of leaning smoothly"). The lean
+    // eases toward the input; the TURN itself still answers immediately, so the
+    // board goes where you point it and the body catches up.
+    this.lean += (steer - this.lean) * (1 - Math.exp(-dt / LEAN_TAU));
 
     for (const e of phys.drainEvents()) {
       // left the ground without a trick (a lip, a ledge, the stairs): hold a
@@ -427,7 +435,7 @@ export class SkateAnim {
         }
         if (pose.board) { pose.board.pos[0] = -pose.board.pos[0]; pose.board.pos[2] = -pose.board.pos[2]; }
       }
-      this._leanLayer(pose, steer);
+      this._leanLayer(pose, this.lean);
       if (this.time >= clip.duration - 0.05) { phys.pushing = false; this._toState('ride'); }
     } else if (this.state === 'revert') {
       const clip = this.clips.revertclip;
@@ -468,7 +476,7 @@ export class SkateAnim {
       const A = 0.95, B = 1.80;         // balance loop inside [pop..land]
       if (!this._manualOut && this.time >= B) this.time = A + (this.time - B);
       clip.sample(Math.min(this.time, clip.duration - 0.034), mirror, pose);
-      this._leanLayer(pose, steer * 0.5);
+      this._leanLayer(pose, this.lean * 0.5);
       phys.pushing = false;
       if (this.time >= clip.duration - 0.05) this._toState('ride');
     } else if (this.state === 'trick') {
@@ -873,14 +881,14 @@ export class SkateAnim {
     base.sample(this.ridePoseT, mirror, pose);
     // flatten the sampled board — riding board is procedural
     const sp = Math.min(1, this.phys.speed() / 5);
-    const lean = steer * this.phys.rollSign * 0.14 * sp;   // board banks with the turn
+    const lean = this.lean * this.phys.rollSign * 0.14 * sp;   // board banks with the turn (eased)
     pose.board = {
       pos: [0, BOARD_REST_Y, 0],
       quat: _q.setFromAxisAngle(_z, lean).toArray(),
     };
     // idle bob
     addRot(pose, 'Spine_03', 'x', Math.sin(this._t * 1.7) * 0.015);
-    this._leanLayer(pose, steer);
+    this._leanLayer(pose, this.lean);
     if (pose.hipsPos) pose.hipsPos[1] += Math.sin(this._t * 2.3) * 0.004;
     // debug: try a rotation on a bone from the console (SK8.anim.boneTest = {bone, axis, angle})
     if (this.boneTest) addRot(pose, this.boneTest.bone, this.boneTest.axis, this.boneTest.angle);
