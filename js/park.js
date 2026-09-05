@@ -46,19 +46,41 @@ export const MODELS = {
 
 // the quarter-pipe model's transition faces its local +X (height-probed);
 // rotY 90 turns it to face −Z. {model, x, z, rot(deg), scale, variant, sink}
+// THE OWNER'S AUTHORED MAP (exported from the map editor 2026-09-05, 31 props):
+// this is what ships — a fresh browser (the phone) has no saved layout and
+// gets exactly this. The editor's "Reset to default" comes back to it too.
 export const DEFAULT_LAYOUT = [
-  // two rows of three behind the pad, facing it; two of two on the sides
-  ...[-10.4, -7.8, -5.2].map((x, i) => ({ model: 'ramp', x, z: 17.5, rot: 90, scale: 2.6, variant: i + 1 })),
-  ...[5.2, 7.8, 10.4].map((x, i) => ({ model: 'ramp', x, z: 17.5, rot: 90, scale: 2.6, variant: i + 4 })),
-  ...[6.7, 9.3].map((z, i) => ({ model: 'ramp', x: -19.5, z, rot: 0, scale: 2.6, variant: [7, 2][i] })),
-  ...[6.7, 9.3].map((z, i) => ({ model: 'ramp', x: 19.5, z, rot: 180, scale: 2.6, variant: [3, 6][i] })),
-  { model: 'ramp2', x: 32, z: 8, rot: 90, scale: 6.0 },
-  { model: 'ramp_haven', x: 0, z: -27, rot: 0, scale: 5.0, sink: 0.28 },
-  { model: 'grind_rail', x: 7, z: -14, rot: 0, scale: 1.4 },
-  { model: 'curve_bridge', x: -9, z: -21, rot: 0, scale: 3.0 },
-  { model: 'picnic_table', x: -27, z: 10, rot: 30, scale: 1.0 },
-  { model: 'skate_ledge', x: -5, z: -14, rot: 0, scale: 4.0, sink: 0.28 },
-  { model: 'boombox', x: 0, z: 17.5, rot: -90, scale: 0.4 },   // the gap between the two rows of quarter pipes
+  { model: "ramp", x: -16.37, z: 16.79, rot: 45, scale: 3.8, variant: 2 },
+  { model: "ramp", x: -13.9, z: 18.14, rot: 75, scale: 3.8, variant: 2 },
+  { model: "ramp", x: -7.67, z: 18.14, rot: 90, scale: 3.5, variant: 6 },
+  { model: "ramp", x: 3.41, z: 18.03, rot: 90, scale: 3.4, variant: 4 },
+  { model: "ramp", x: -18.34, z: 14.29, rot: 30, scale: 4, variant: 7 },
+  { model: "ramp", x: 19.02, z: 1.04, rot: 195, scale: 3.2, variant: 2 },
+  { model: "ramp", x: -19.47, z: 5.44, rot: 0, scale: 3.7, variant: 3, sink: 0.05 },
+  { model: "ramp", x: -19.46, z: 9.09, rot: 0, scale: 3.8, variant: 1, sink: 0.05 },
+  { model: "ramp", x: 19.59, z: 5.07, rot: 180, scale: 4.1, variant: 3 },
+  { model: "ramp", x: 19.41, z: 11.28, rot: 180, scale: 4.2, variant: 6, sink: 0 },
+  { model: "ramp2", x: 26.59, z: -12.15, rot: 270, scale: 12, sink: 0.45 },
+  { model: "ramp_haven", x: -1.73, z: -26.63, rot: 0, scale: 6.8, sink: 0.28 },
+  { model: "grind_rail", x: -16.45, z: -11.58, rot: 90, scale: 2.2 },
+  { model: "curve_bridge", x: 16.41, z: 16.61, rot: 30, scale: 2.9, sink: 0 },
+  { model: "picnic_table", x: -19.29, z: -16.44, rot: 105, scale: 1.6 },
+  { model: "picnic_table", x: -14.18, z: -30.31, rot: 180, scale: 1.3, sink: 0 },
+  { model: "ramp", x: -21.2, z: -27.54, rot: 0, scale: 3.2, sink: 0, variant: 4 },
+  { model: "ramp", x: 19.87, z: -27.18, rot: 180, scale: 2.9, sink: 0, variant: 5 },
+  { model: "ramp", x: 9.42, z: -30.41, rot: 270, scale: 3.3, sink: 0.05, variant: 6 },
+  { model: "grind_rail", x: 4.67, z: -5.74, rot: 300, scale: 1.9, sink: 0 },
+  { model: "ramp", x: 12.54, z: -30.4, rot: 270, scale: 3.2, sink: 0.05, variant: 7 },
+  { model: "ramp", x: 15.6, z: -30.41, rot: 270, scale: 3.2, sink: 0.05, variant: 2 },
+  { model: "curve_bridge", x: -11.32, z: -10.93, rot: 120, scale: 2.8, sink: 0 },
+  { model: "ramp", x: -4.3, z: 18.08, rot: 90, scale: 3.3, sink: 0, variant: 5 },
+  { model: "ramp", x: -17.48, z: -30.78, rot: 270, scale: 3, sink: 0, variant: 1 },
+  { model: "ramp", x: -11.01, z: -30.97, rot: 270, scale: 2.9, sink: 0, variant: 5 },
+  { model: "ramp", x: -6.62, z: -24.8, rot: 270, scale: 2.3, sink: 0, variant: 6 },
+  { model: "ramp", x: 3.51, z: -24.98, rot: 270, scale: 2.1, sink: 0, variant: 6 },
+  { model: "skate_ledge", x: -15.11, z: -2.21, rot: 0, scale: 7, sink: 0.28 },
+  { model: "boombox", x: 19.78, z: 8.03, rot: 255, scale: 0.4, sink: 0 },
+  { model: "ramp", x: 9.75, z: 17.57, rot: 90, scale: 3.5, sink: 0, variant: 7 },
 ];
 
 // grindable edges per model, in the model's local space (probed on the

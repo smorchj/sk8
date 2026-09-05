@@ -31,6 +31,12 @@ const HALF_LEN = 0.41;              // board half length (skateboard.glb bbox)
 // wrap moves to the back foot, travel is preserved. No nollies on this board.
 const OVERRIDES = {
   impossible: { flipNose: true, swapMirror: true },
+  // the drop-in has no pop and its take is ANCHORED (the board pinned to the
+  // back foot), so the no-pop fallback — net travel of the board — has nothing
+  // to read and keeps +Z. On the studio track +Z is the TAIL (the GLB's visual
+  // nose is on -Z, CLAUDE.md), so relabel: read as-is the feet test came out
+  // regular for a capture the studio's own foot FK read as goofy.
+  dropin: { flipNose: true },
   kickflip: { rolloutEnd: 0.87 },   // owner: everything after 0.87 is broken capture
   // owner: heelflip capture turns after landing but the board doesn't follow —
   // remove the rider's post-land yaw drift relative to the board
@@ -377,7 +383,11 @@ export class Clip {
     this.noseSign = 1;   // from here on, track +Z IS the nose
 
     // 3) stance from feet FK at a grounded reference moment
-    const refT = this.tags.pop != null ? Math.max(0, this.tags.pop - 0.05) : this.duration / 2;
+    // the stance is read where both feet are planted: just before the pop, or
+    // for a clip with no pop (the drop-in) just before its commit — never mid-clip,
+    // where a drop-in's feet are shuffling and read the wrong way round
+    const refTag = this.tags.pop ?? this.tags.commit;
+    const refT = refTag != null ? Math.max(0, refTag - 0.05) : this.duration / 2;
     const refI = Math.min(N - 1, Math.round(refT * FPS));
     const getDelta = (bn) => {
       const a = bones.get(bn);
@@ -787,6 +797,7 @@ export async function loadClips(skel, onProgress) {
     cruise: 'Cruise_slalom_revert.json',
     manual: 'Manual_V1.json',          // recovered from the recycle bin (2026-09-02)
     revertclip: 'Cruise_slalom_revert.json',   // subclipped to the mocapped revert
+    dropin: 'Dropin_V1.json',          // the owner's drop-in (tags: commit, land, out)
     // grabs (indy…) are poses blended over the ollie air — see loadGrabs
   };
   const clips = {};

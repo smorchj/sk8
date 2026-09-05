@@ -23,6 +23,10 @@ const CROUCH_UP = 0.55;      // s to full wind-up
 const CROUCH_DOWN = 0.30;    // s to stand back up
 const FADE = 0.12;           // s default crossfade on state changes
 const LEAN_TAU = 0.20;         // s — how fast the body's lean chases the steer input
+const DROPIN_PERCH_T = 0.30;   // s into the drop-in take: settled on the coping, before anything moves
+const DROPIN_RUN_IN = 0.12;    // s of the take to play before 'commit' so the tip reads, not snaps
+const DROPIN_PERCH_OUT = 0.36; // m the perched rider+board sit OUT over the lip: back wheels on the coping, front half in the air.
+                               // The physics root (the contact) stays on the deck behind — put on the edge it slides down the face.
 const GRAB_IN = 0.16;        // s to reach the grab pose after the input
 const GRAB_OUT = 0.14;       // s to let go after release
 const GRAB_LAND = 0.22;      // let go this long before touchdown, no matter what
@@ -256,6 +260,48 @@ export class SkateAnim {
     };
     this._toState('trick');
     this._fadeDur = 0.15;
+  }
+
+  // The drop-in (owner, 2026-09-05): the rider tips off the coping and rides
+  // the transition down. It runs on the trick machinery like _startAir does —
+  // popped already, vy 0, so the physics never launches — from the clip's
+  // 'commit' tag (the board starting to rotate down) to its 'land' (the wheels
+  // biting the transition), where the normal landing hand-off takes over. The
+  // physics carries the root down the ramp; the clip is the body and the deck.
+  // The wait on the lip is the first half of the owner's take — tail on the
+  // coping, nose hanging out, back foot pressing the tail — so that is what
+  // plays while waiting: the clip HELD on a perch frame (rate 0). popped:true
+  // does two things here: the physics never pops, and the wind-in clamp that
+  // glues a board flat to the ground is skipped, so the track's tilted deck
+  // shows as captured.
+  dropInPerch() {
+    const clip = this.clips.dropin;
+    if (!clip || clip.tags.land == null) return false;
+    if (this.state === 'trick' && this.trick?.name === 'dropin') return true;
+    this.trick = {
+      clip, mirror: clip.stance !== this.stance, name: 'dropin', vy: 0,
+      t: DROPIN_PERCH_T, rate: 0, popped: true, held: true, perchW: 1,
+      grab: null, grabVar: null, label: 'Drop in',
+    };
+    this._toState('trick');
+    this._fadeDur = 0.12;
+    return true;
+  }
+
+  // committing releases the hold: the take runs on from the perch through its
+  // commit (the board rotating down) to land (the wheels biting the transition),
+  // where the normal landing hand-off takes over. Physics carries the root.
+  dropIn() {
+    const clip = this.clips.dropin;
+    if (!clip || clip.tags.land == null) return false;
+    if (!(this.state === 'trick' && this.trick?.name === 'dropin')) this.dropInPerch();
+    const tr = this.trick;
+    tr.held = false;
+    tr.rate = 1;
+    tr.t = Math.max(tr.t, (clip.tags.commit ?? 0) - DROPIN_RUN_IN);
+    this.lastTrick = 'Drop in';
+    this.onTrick?.('Drop in');
+    return true;
   }
 
   _startTrick(name, strength) {
@@ -501,6 +547,15 @@ export class SkateAnim {
         phys.events.push({ type: 'land', airTime: 0 });
       }
       tr.clip.sample(tr.t, tr.mirror, pose);
+      if (tr.name === 'dropin' && tr.perchW > 0) {
+        // out over the coping (anchor +Z = the nose = down the ramp); the physics
+        // root stays on the deck, so this is a visual lead that the run-in gives
+        // back to the physics as the root goes over the edge
+        if (!tr.held) tr.perchW = Math.max(0, tr.perchW - dt / DROPIN_RUN_IN);
+        const out = DROPIN_PERCH_OUT * tr.perchW;
+        if (pose.hipsPos) pose.hipsPos[2] += out;
+        if (pose.board) pose.board.pos[2] += out;
+      }
       if (!tr.popped && pose.board) {     // wind-in: board glued to the ground
         pose.board.pos[1] = Math.min(pose.board.pos[1], BOARD_REST_Y);
       }

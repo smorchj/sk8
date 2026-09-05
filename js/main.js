@@ -251,8 +251,74 @@ try {
 
 // ── game objects ────────────────────────────────────────────────────────────
 
-// the rider starts on the street slab, rolling toward the stairs and the pad
-const START = { x: 0, z: -16, yaw: 0 };
+// The run starts perched on a quarter pipe's coping, and you drop in (owner,
+// 2026-09-04). The lip to pick is chosen from the park rather than written
+// down, so it survives the owner moving the ramps: of every coping line, take
+// the highest one that faces the middle of the park, since that is the one with
+// a run-out in front of it. `out` points DOWN the transition.
+//
+// The physics needs nothing for this — a rider set on the coping rolls over the
+// lip, catches the transition and comes out the bottom at ~5.9 m/s on its own.
+// What it does NOT have is a drop-in ANIMATION, so until one is captured the
+// rider rides down in its normal pose.
+const CENTRE = new THREE.Vector3(0, 0, 4);
+function pickLip() {
+  let best = null;
+  for (const t of park.transitions) {
+    const mid = t.a.clone().add(t.b).multiplyScalar(0.5);
+    const toCentre = CENTRE.clone().sub(mid).setY(0).normalize();
+    const faces = t.out.dot(toCentre);            // the transition drops toward the park
+    if (faces < 0.3) continue;
+    const score = mid.y + faces * 0.6;
+    if (!best || score > best.score) best = { score, mid, out: t.out.clone() };
+  }
+  return best;
+}
+const LIP = pickLip();
+const START = LIP
+  // the root is the TAIL's contact point (the take is anchored on the back foot), and
+  // the tail rests ON the coping: root at the lip line, so the deck's other 0.7 m —
+  // nose and front wheels — hangs out over the transition (owner: "the wheels should
+  // be past the coping")
+  // the ROOT is the contact under the back foot and it must sit ON the deck —
+  // put past the lip it slid down the transition face (measured: root 7 cm out,
+  // 33 cm down, rider on its side). The nose hanging over the coping comes from
+  // the clip's board track, which reaches 0.71 m ahead of the back foot.
+  ? { x: LIP.mid.x - LIP.out.x * 0.14, y: LIP.mid.y + 0.02, z: LIP.mid.z - LIP.out.z * 0.14,
+      yaw: Math.atan2(LIP.out.x, LIP.out.z), drop: true }
+  : { x: 0, y: 0, z: -16, yaw: 0, drop: false };   // no ramps in the layout: the old flat start
+// perched on the lip, the run does not begin until the player commits
+let waiting = START.drop;
+// The chase camera sits behind the deck, where the coping and the nose hanging
+// over it are hidden by the rider — from there a perch reads as standing on the
+// deck (owner's screenshots, 2026-09-05). While perched the camera stands on
+// the RAMP side, low, three-quarter: back wheels on the coping, nose out over
+// the transition, both in view. The chase springs back in as the rider drops.
+const PERCH_CAM = LIP ? { pos: new THREE.Vector3(), look: new THREE.Vector3() } : null;   // filled by perchFraming()
+function perchFraming() {
+  if (!LIP) return;
+  const t = park.transitions.find(t => t.a.clone().add(t.b).multiplyScalar(0.5).distanceTo(LIP.mid) < 0.01) || park.transitions[0];
+  const lipDir = t.b.clone().sub(t.a).setY(0).normalize();
+  PERCH_CAM.look.set(START.x, START.y, START.z).addScaledVector(LIP.out, 0.35).add(new THREE.Vector3(0, 0.5, 0));
+  PERCH_CAM.pos.copy(PERCH_CAM.look).addScaledVector(LIP.out, 2.2).addScaledVector(lipDir, 1.6).add(new THREE.Vector3(0, -0.35, 0));
+}
+perchFraming();
+function toStart() {
+  physics.pos.set(START.x, START.y, START.z);
+  physics.vel.set(0, 0, 0);
+  physics.rollSign = 1; physics.up.set(0, 1, 0); physics.grounded = true;
+  physics.vert = null; physics.grind = null;
+  physics.setYaw(START.yaw);
+  waiting = START.drop;
+  if (!START.drop) physics.vel.set(0, 0, 2);
+}
+// the first input tips it in — a drop-in is a commitment, not a roll-up
+function commit() {
+  if (!waiting) return;
+  waiting = false;
+  if (LIP) physics.vel.copy(LIP.out).multiplyScalar(0.8);
+  anim?.dropIn();                                  // the captured drop-in, from its commit tag
+}
 // the boombox easter egg: gap over it and the park's music comes on
 const boombox = new Boombox({ camera, park });
 
@@ -261,8 +327,7 @@ const physics = new SkatePhysics(park.world);
 const sfx = new SkateSfx({ listener: boombox.listener, physics, anim: null });
 physics.setEdges(park.edges);
 physics.setTransitions(park.transitions);   // coping lines: gap transfers between neighbouring faces
-physics.pos.set(START.x, 0, START.z);
-physics.vel.set(0, 0, 2.0);
+toStart();
 const _rootQ = new THREE.Quaternion();
 
 anim = new SkateAnim({ rig, clips, physics, stance, skel, getSkill, grabs });
@@ -293,12 +358,7 @@ const actions = {
   brake: (on) => { physics.braking = on; },
   toggleCam: () => { freecam = !freecam; controls.enabled = freecam; },
   toggleSlow: () => { slowmo = !slowmo; },
-  reset: () => {
-    physics.pos.set(START.x, 0, START.z); physics.vel.set(0, 0, 2);
-    physics.rollSign = 1; physics.up.set(0, 1, 0); physics.grounded = true;
-    physics.vert = null; physics.grind = null;
-    physics.setYaw(START.yaw);
-  },
+  reset: () => toStart(),
 };
 const recordedActions = Object.fromEntries(Object.entries(actions).map(([k, f]) => [k, (...a) => { recorder.cb(k, a); return f(...a); }]));
 const input = new Input({
@@ -344,6 +404,8 @@ bGoof.addEventListener('click', () => setStance('goofy'));
 setStance(stance);
 updateRiderTag();
 
+addEventListener('keydown', () => commit());
+addEventListener('pointerdown', () => commit());
 document.getElementById('openCreator').addEventListener('click', () => { input.unlock(); creator.open(); });
 addEventListener('keydown', (e) => {                 // Esc from the game opens the menu too
   if (e.key === 'Escape' && !creator.open_ && !editor?.on && !recorder.replaying) { input.unlock(); creator.open(); }
@@ -376,7 +438,13 @@ function creatorMode(on, front = false) {
   input.disabled = on;
   document.body.classList.toggle('creator', on);
   if (on) {
+    // the creator's rider stands on the flat slab, as it always did — never at
+    // the lip. A held drop-in perch under the idle fought it and left the board
+    // on its end, and the lip's edge tipped the root down the transition (owner's
+    // screenshots, 2026-09-05). SKATE puts the rider on the lip (creatorMode off).
+    physics.pos.set(0, 0, -16); physics.up.set(0, 1, 0); physics.setYaw(0); physics.grounded = true;
     physics.vel.set(0, 0, 0);
+    if (anim && anim.state === 'trick' && anim.trick?.name === 'dropin') { anim.trick = null; anim._toState('ride'); }
     controls.enabled = true;
     controls.enablePan = false;
     controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -399,7 +467,7 @@ function creatorMode(on, front = false) {
     controls.enabled = freecam;
     controls.minDistance = 0; controls.maxDistance = Infinity;
     controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI;
-    if (!front) physics.vel.set(0, 0, 2.0);
+    toStart();                                       // SKATE: onto the lip, perched, until the player commits
     updateRiderTag();
   }
 }
@@ -466,6 +534,7 @@ const _travel = new THREE.Vector3();
 
 function updateCamera(dt) {
   if (inCreator) { updateCreatorCamera(dt); return; }
+  if (waiting && PERCH_CAM) { camera.position.copy(PERCH_CAM.pos); camera.lookAt(PERCH_CAM.look); return; }
   if (freecam) { controls.update(); return; }
   // chase the VELOCITY direction, not the board yaw — during air spins (and
   // revert skids) the board whirls while momentum doesn't, and the camera
@@ -616,6 +685,11 @@ function tick(dt, headless = false) {
   if (!recorder.replaying) input.update(dt);      // (a replay sets the channels itself)
   recorder.frame(dt);
   if (inCreator) { physics.vel.set(0, 0, 0); input.steer = 0; }
+  if (waiting && !inCreator) {                       // perched on the coping: the take's own perch, held
+    anim.dropInPerch();
+    if (input.steer || anim.holding) commit();       // (a key or click commits via the listeners below)
+    else { physics.vel.set(0, 0, 0); input.steer = 0; }
+  }
   physics.steer = input.steer;
   physics.spin = input.spin || 0;
   physics.pump = anim.holding && anim.state === 'windup';   // the held wind-up pumps a transition (anim state: replays match)
@@ -638,6 +712,8 @@ function tick(dt, headless = false) {
     // exist to hold the feet on the deck.
     idleT += dt;
     rig.apply(idle(idleBuf, idleT));
+    boardNode.position.set(0, 0.07, 0);              // resting flat under the rider (origin is mid-height)
+    boardNode.quaternion.identity();
     faceFront();
   } else {
     if (buf.board) {
